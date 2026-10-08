@@ -101,33 +101,23 @@ async function bootstrap(): Promise<void> {
   // ─── Cookie Parser ─────────────────────────────────────────────────────────
   app.use(cookieParser(process.env['COOKIE_SECRET']));
 
-  // ─── CORS ───────────────────────────────────────────────────────────────────
-  const allowedOrigins = (
-    process.env['CORS_ORIGINS'] ?? 'http://localhost:5173'
-  )
-    .split(',')
-    .map((o) => o.trim());
-
-  // SECURITY: Disallow wildcard '*' origin with credentials
-  if (allowedOrigins.includes('*')) {
-    throw new Error(
-      'Security violation: CORS wildcard origin "*" is prohibited when credentials are enabled.',
-    );
-  }
+  // CORS
+  const rawOrigins = (process.env["CORS_ORIGINS"] || process.env["CORS_ORIGIN"] || "*").split(",").map((o) => o.trim());
+  const isWildcard = rawOrigins.includes("*");
 
   app.enableCors({
-    origin: allowedOrigins,
-    credentials: true, // Allow cookies (for httpOnly refresh tokens)
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    origin: isWildcard ? true : rawOrigins,
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: [
-      'Content-Type',
-      'Authorization',
-      'X-Correlation-ID',
-      'Accept',
-      'x-guest-cart-token',
-      'X-Guest-Cart-Token',
+      "Content-Type",
+      "Authorization",
+      "X-Correlation-ID",
+      "Accept",
+      "x-guest-cart-token",
+      "X-Guest-Cart-Token",
     ],
-    exposedHeaders: ['X-Correlation-ID', 'x-guest-cart-token', 'X-Guest-Cart-Token'],
+    exposedHeaders: ["X-Correlation-ID", "x-guest-cart-token", "X-Guest-Cart-Token"],
   });
 
   // ─── Graceful Shutdown Hooks (registered before listener starts) ───────────

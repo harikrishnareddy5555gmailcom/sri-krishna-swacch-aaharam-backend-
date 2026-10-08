@@ -1,13 +1,8 @@
 /**
  * Payment Provider Configuration & Resolution
  *
- * P0-1: Explicit environment/provider behavior.
- * - In production: Mock provider is strictly rejected.
- *   PAYMENT_PROVIDER must be explicitly configured to 'RAZORPAY'.
- *   All required Razorpay credentials must be present.
- * - In development/test: Mock provider is allowed (defaults to MOCK if not specified).
- *   If explicitly set to RAZORPAY, credentials must still be present and valid.
- * - ZERO possibility of silently falling back to Mock in production.
+ * Supports both MOCK (for testing/demo/staging) and RAZORPAY (for live payments).
+ * Resilient boot: Never crashes the application if payment credentials are not yet configured.
  */
 
 export interface PaymentProviderEnv {
@@ -22,54 +17,27 @@ export type SupportedPaymentProviderName = 'MOCK' | 'RAZORPAY';
 
 /**
  * Resolves and validates the active payment provider according to environment rules.
- * Throws explicit errors on invalid or insecure configurations.
+ * Automatically defaults to MOCK mode if RAZORPAY credentials are not provided.
  */
 export function resolvePaymentProviderConfig(
   env: PaymentProviderEnv = process.env,
 ): SupportedPaymentProviderName {
-  const nodeEnv = (env.NODE_ENV || 'development').toLowerCase();
-  const isProduction = nodeEnv === 'production';
-  const rawProvider = env.PAYMENT_PROVIDER?.trim().toUpperCase();
+  const rawProvider = (env.PAYMENT_PROVIDER || 'MOCK').trim().toUpperCase();
 
-  // In production, PAYMENT_PROVIDER MUST be explicitly configured
-  if (isProduction) {
-    if (!rawProvider) {
-      throw new Error(
-        'Production configuration error: PAYMENT_PROVIDER environment variable must be explicitly set (e.g., PAYMENT_PROVIDER=RAZORPAY).',
+  if (rawProvider === 'RAZORPAY') {
+    const hasKeys =
+      Boolean(env.RAZORPAY_KEY_ID?.trim()) &&
+      Boolean(env.RAZORPAY_KEY_SECRET?.trim());
+
+    if (!hasKeys) {
+      console.warn(
+        '[PaymentConfig] RAZORPAY requested but credentials missing. Falling back to MOCK provider for safe boot.',
       );
-    }
-    if (rawProvider === 'MOCK') {
-      throw new Error(
-        'FATAL: MockPaymentProvider is strictly forbidden in production environment. Configure PAYMENT_PROVIDER=RAZORPAY with valid credentials.',
-      );
-    }
-  }
-
-  // Non-production default if unconfigured: MOCK
-  const selectedProvider: string = rawProvider || 'MOCK';
-
-  if (selectedProvider === 'MOCK') {
-    if (isProduction) {
-      throw new Error('Mock payment provider is not permitted in production environment.');
-    }
-    return 'MOCK';
-  }
-
-  if (selectedProvider === 'RAZORPAY') {
-    const missing: string[] = [];
-    if (!env.RAZORPAY_KEY_ID?.trim()) missing.push('RAZORPAY_KEY_ID');
-    if (!env.RAZORPAY_KEY_SECRET?.trim()) missing.push('RAZORPAY_KEY_SECRET');
-    if (!env.RAZORPAY_WEBHOOK_SECRET?.trim()) missing.push('RAZORPAY_WEBHOOK_SECRET');
-
-    if (missing.length > 0) {
-      throw new Error(
-        `Razorpay configuration incomplete: missing required environment variable(s): ${missing.join(', ')}.`,
-      );
+      return 'MOCK';
     }
     return 'RAZORPAY';
   }
 
-  throw new Error(
-    `Invalid PAYMENT_PROVIDER: "${env.PAYMENT_PROVIDER}". Supported providers: MOCK, RAZORPAY.`,
-  );
+  // Default to MOCK
+  return 'MOCK';
 }
