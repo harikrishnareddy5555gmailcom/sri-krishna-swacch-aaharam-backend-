@@ -882,6 +882,13 @@ export class OrderService {
       // Inventory transition hooks inside the same transaction
       if (this.inventoryService) {
         if (targetStatus === OrderStatus.CANCELLED) {
+          if (this.financeService) {
+            await this.financeService.postOrderCancellationInTransaction(
+              { id: orderId, totalAmount: current.totalAmount, currency: current.currency },
+              tx,
+              actor.id,
+            ).catch((err) => this.logger.warn(`Failed to post cancellation to ledger: ${err}`));
+          }
           await this.inventoryService.restoreCancelledOrder(
             orderId,
             actor.id,

@@ -33,6 +33,7 @@ import {
   type ProfitLossReport,
   type BalanceSheetReport,
   type AccountDrillDownReport,
+  type ExecutiveSummaryReport,
 } from './dto/index.js';
 
 export interface AccountBalanceResult {
@@ -649,6 +650,131 @@ export class FinanceService {
     }
   }
 
+  
+  async postOrderCancellationInTransaction(
+    order: {
+      id: string;
+      totalAmount: number;
+      currency?: string;
+    },
+    tx?: Prisma.TransactionClient,
+    actorId?: string,
+  ): Promise<FinancialTransaction & { lines: FinancialTransactionLine[] }> {
+    const idempotencyKey = buildIdempotencyKey.cancellation(order.id);
+
+    // 1. Idempotency check
+    const existing = await this.financeRepo.findTransactionByIdempotencyKey(idempotencyKey, tx);
+    if (existing) {
+      return existing;
+    }
+
+    // 2. Resolve account IDs
+    const [refundsIssuedAccountId, clearingAccountId] = await Promise.all([
+      this.getAccountIdByCode(ACCOUNT_CODES.REFUNDS_ISSUED, tx),
+      this.getAccountIdByCode(ACCOUNT_CODES.PAYMENT_GATEWAY_CLEARING, tx),
+    ]);
+
+    // 3. Balanced double-entry lines: Debit 4100 Refunds Issued, Credit 1100 Gateway Clearing
+    const lines: CreateLineInput[] = [
+      {
+        accountId: refundsIssuedAccountId,
+        debitPaise: order.totalAmount,
+        creditPaise: 0,
+        description: `Refund / deduction for cancelled Order ${order.id}`,
+      },
+      {
+        accountId: clearingAccountId,
+        debitPaise: 0,
+        creditPaise: order.totalAmount,
+        description: `Gateway funds reversed / returned for cancelled Order ${order.id}`,
+      },
+    ];
+
+    const txData = {
+      transactionType: FinancialTransactionType.REFUND,
+      currency: order.currency ?? 'INR',
+      sourceType: FINANCE_SOURCE_TYPES.ORDER,
+      sourceId: order.id,
+      description: `Order cancellation refund recognized: ${order.id}`,
+      idempotencyKey,
+      createdById: actorId ?? 'SYSTEM',
+      status: FinancialTransactionStatus.POSTED,
+      postedAt: new Date(),
+    };
+
+    if (tx) {
+      const createdTx = await this.financeRepo.createTransaction(txData, lines, tx);
+      await this.auditService.logEvent({
+        actorId: actorId ?? 'SYSTEM',
+        actorRole: 'SYSTEM',
+        action: 'FINANCE_ORDER_CANCELLATION_POSTED',
+        entityType: 'FINANCIAL_TRANSACTION',
+        entityId: createdTx.id,
+        amount: order.totalAmount,
+        currency: order.currency ?? 'INR',
+        metadata: {
+          orderId: order.id,
+          idempotencyKey,
+          transactionType: createdTx.transactionType,
+          sourceType: FINANCE_SOURCE_TYPES.ORDER,
+          sourceId: order.id,
+        },
+      });
+      return createdTx;
+    }
+
+    try {
+      const createdTx = await this.financeRepo.transaction(async (client) => {
+        return this.financeRepo.createTransaction(txData, lines, client);
+      });
+
+      await this.auditService.logEvent({
+        actorId: actorId ?? 'SYSTEM',
+        actorRole: 'SYSTEM',
+        action: 'FINANCE_ORDER_CANCELLATION_POSTED',
+        entityType: 'FINANCIAL_TRANSACTION',
+        entityId: createdTx.id,
+        amount: order.totalAmount,
+        currency: order.currency ?? 'INR',
+        metadata: {
+          orderId: order.id,
+          idempotencyKey,
+          transactionType: createdTx.transactionType,
+          sourceType: FINANCE_SOURCE_TYPES.ORDER,
+          sourceId: order.id,
+        },
+      });
+
+      return createdTx;
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const concurrent = await this.financeRepo.findTransactionByIdempotencyKey(idempotencyKey);
+        if (concurrent) return concurrent;
+      }
+      throw error;
+    }
+  }
+
+  async syncCancelledOrdersToLedger(): Promise<number> {
+    try {
+      const cancelledOrders = await this.financeRepo.findCancelledOrders();
+
+      let syncedCount = 0;
+      for (const ord of cancelledOrders) {
+        const key = buildIdempotencyKey.cancellation(ord.id);
+        const existing = await this.financeRepo.findTransactionByIdempotencyKey(key);
+        if (!existing) {
+          await this.postOrderCancellationInTransaction(ord);
+          syncedCount++;
+        }
+      }
+      return syncedCount;
+    } catch (err) {
+      this.logger.warn(`Failed to sync cancelled orders to ledger: ${err}`);
+      return 0;
+    }
+  }
+
   async validateExpenseAccount(
     accountId: string,
     tx?: Prisma.TransactionClient,
@@ -990,6 +1116,7 @@ export class FinanceService {
   }
 
   async getTrialBalanceReport(query?: QueryFinancialReportDto): Promise<TrialBalanceReport> {
+    await this.syncCancelledOrdersToLedger().catch(() => 0);
     const { from, to, preset } = this.resolvePeriodDates(query);
     const accounts = await this.financeRepo.listAccounts({ isActive: true });
     const balanceMap = await this.financeRepo.getAggregatedAccountBalances({ from, to });
@@ -1036,6 +1163,7 @@ export class FinanceService {
   }
 
   async getProfitLossReport(query?: QueryFinancialReportDto): Promise<ProfitLossReport> {
+    await this.syncCancelledOrdersToLedger().catch(() => 0);
     const { from, to, preset } = this.resolvePeriodDates(query);
     const accounts = await this.financeRepo.listAccounts({ isActive: true });
     const balanceMap = await this.financeRepo.getAggregatedAccountBalances({ from, to });
@@ -1302,6 +1430,168 @@ export class FinanceService {
       page,
       limit,
       totalPages: Math.ceil(total / limit) || 1,
+    };
+  }
+
+  /**
+   * Generates authoritative Executive Financial Summary.
+   * Computes exact order volume, cancellations, refunds, expenses, net profit,
+   * liquidity balances, and recent reconciliation in a single unified operation.
+   */
+  async getExecutiveSummaryReport(query?: QueryFinancialReportDto): Promise<ExecutiveSummaryReport> {
+    const { from, to, preset } = this.resolvePeriodDates(query);
+
+    // 1. Fetch domain aggregates in parallel
+    const domainData = await this.financeRepo.getExecutiveDomainAggregates({ from, to });
+
+    // 2. Fetch ledger balances for Cash & Bank (1000) and Accounts Payable (2000)
+    let cashInBankPaise = 0;
+    let accountsPayablePaise = 0;
+    try {
+      const cashAccId = await this.getAccountIdByCode(ACCOUNT_CODES.CASH_AND_BANK);
+      const cashBal = await this.getAccountBalance(cashAccId);
+      cashInBankPaise = cashBal.balancePaise;
+    } catch {
+      // safe fallback
+    }
+
+    try {
+      const apAccId = await this.getAccountIdByCode(ACCOUNT_CODES.ACCOUNTS_PAYABLE);
+      const apBal = await this.getAccountBalance(apAccId);
+      accountsPayablePaise = apBal.balancePaise;
+    } catch {
+      // safe fallback
+    }
+
+    // 3. Process Orders
+    const totalOrdersCount = domainData.ordersTotal._count.id ?? 0;
+    const grossOrderVolumePaise = domainData.ordersTotal._sum.totalAmount ?? 0;
+
+    const cancelledGroup = domainData.ordersGrouped.find((g) => g.status === 'CANCELLED');
+    const cancelledOrdersCount = cancelledGroup?._count.id ?? 0;
+    const cancelledAmountPaise = cancelledGroup?._sum.totalAmount ?? 0;
+
+    const completedOrdersCount = Math.max(0, totalOrdersCount - cancelledOrdersCount);
+
+    // 4. Process Refunds
+    const completedRefundsCount = domainData.refundsCompleted._count.id ?? 0;
+    const refundedAmountPaise = domainData.refundsCompleted._sum.amount ?? 0;
+
+    // Total deductions = cancelled order amount + completed refunds
+    const totalDeductionsPaise = cancelledAmountPaise + refundedAmountPaise;
+
+    // Net Realized Turnover / Sales
+    const netRealizedRevenuePaise = Math.max(0, grossOrderVolumePaise - totalDeductionsPaise);
+
+    // 5. Process Expenses
+    const postedExp = domainData.expensesGrouped.find((e) => e.status === 'POSTED');
+    const approvedExp = domainData.expensesGrouped.find((e) => e.status === 'APPROVED');
+    const pendingExp = domainData.expensesGrouped.find((e) => e.status === 'SUBMITTED');
+
+    const postedExpensesPaise = postedExp?._sum.amountPaise ?? 0;
+    const approvedExpensesPaise = approvedExp?._sum.amountPaise ?? 0;
+    const pendingApprovalExpensesPaise = pendingExp?._sum.amountPaise ?? 0;
+
+    // Total store operational expenses: approved + posted
+    let totalExpensesPaise = postedExpensesPaise + approvedExpensesPaise;
+    const expensesCount = (postedExp?._count.id ?? 0) + (approvedExp?._count.id ?? 0);
+
+    // If no expenses in expenses table, check ledger Account 5000 as fallback
+    if (totalExpensesPaise === 0) {
+      try {
+        const opAccId = await this.getAccountIdByCode(ACCOUNT_CODES.OPERATING_EXPENSES);
+        const opBal = await this.getAccountBalance(opAccId);
+        if (opBal.balancePaise > 0) {
+          totalExpensesPaise = opBal.balancePaise;
+        }
+      } catch {
+        // safe fallback
+      }
+    }
+
+    // 6. Net Profit / Savings in Pocket
+    const netProfitPaise = netRealizedRevenuePaise - totalExpensesPaise;
+    const isProfitable = netProfitPaise >= 0;
+    const netProfitMarginPercent =
+      netRealizedRevenuePaise > 0
+        ? Math.round((netProfitPaise / netRealizedRevenuePaise) * 1000) / 10
+        : 0;
+
+    // 7. Expense Category Breakdown
+    const totalExpCatPaise = domainData.expensesByCategory.reduce((sum, c) => sum + (c._sum.amountPaise ?? 0), 0) || 1;
+    const expenseBreakdown = domainData.expensesByCategory.map((c) => {
+      const amountPaise = c._sum.amountPaise ?? 0;
+      return {
+        category: c.category,
+        amountPaise,
+        count: c._count.id ?? 0,
+        percentage: Math.round((amountPaise / totalExpCatPaise) * 100),
+      };
+    }).sort((a, b) => b.amountPaise - a.amountPaise);
+
+    // 8. Recent Reconciliation List
+    const recentReconciliation = domainData.recentOrders.map((o) => {
+      const customerName = [o.user?.firstName, o.user?.lastName].filter(Boolean).join(' ') || 'Customer';
+      const customerEmail = o.user?.email || 'N/A';
+      const isCancelled = o.status === 'CANCELLED';
+      const completedRefunds = o.refunds?.filter((r) => r.status === 'COMPLETED').reduce((sum, r) => sum + r.amount, 0) ?? 0;
+      const refundDeductedPaise = isCancelled ? o.totalAmount : completedRefunds;
+      const paymentCapturedPaise = o.paymentAttempt?.status === 'CAPTURED' ? o.paymentAttempt.amount : (isCancelled ? 0 : o.totalAmount);
+      const netRealizedPaise = isCancelled ? 0 : Math.max(0, o.totalAmount - refundDeductedPaise);
+
+      return {
+        orderId: o.id,
+        orderNumber: o.orderNumber,
+        customerName,
+        customerEmail,
+        status: o.status,
+        totalAmountPaise: o.totalAmount,
+        paymentCapturedPaise,
+        refundDeductedPaise,
+        netRealizedPaise,
+        createdAt: o.createdAt.toISOString(),
+      };
+    });
+
+    // 9. Waterfall Steps
+    const waterfallSteps = [
+      { label: 'Gross Customer Orders (మొత్తం ఆర్డర్లు)', amountPaise: grossOrderVolumePaise, type: 'positive' as const },
+      { label: 'Cancelled & Returns Deducted (రద్దు & వాపసు)', amountPaise: totalDeductionsPaise, type: 'negative' as const },
+      { label: 'Net Realized Sales (చేతికి వచ్చిన వ్యాపారం)', amountPaise: netRealizedRevenuePaise, type: 'subtotal' as const },
+      { label: 'Store & Operational Expenses (దుకాణం ఖర్చులు)', amountPaise: totalExpensesPaise, type: 'negative' as const },
+      { label: 'Net Savings in Pocket (నికర లాభం)', amountPaise: netProfitPaise, type: 'total' as const },
+    ];
+
+    return {
+      period: {
+        startDate: from?.toISOString(),
+        endDate: to?.toISOString(),
+        preset,
+      },
+      metrics: {
+        totalOrdersCount,
+        grossOrderVolumePaise,
+        cancelledOrdersCount,
+        cancelledAmountPaise,
+        completedRefundsCount,
+        refundedAmountPaise,
+        totalDeductionsPaise,
+        completedOrdersCount,
+        netRealizedRevenuePaise,
+        totalExpensesPaise,
+        pendingApprovalExpensesPaise,
+        approvedExpensesPaise,
+        postedExpensesPaise,
+        expensesCount,
+        netProfitPaise,
+        netProfitMarginPercent,
+        isProfitable,
+        cashInBankPaise,
+        accountsPayablePaise,
+      },
+      expenseBreakdown,
+      recentReconciliation,
+      waterfallSteps,
     };
   }
 }

@@ -165,3 +165,63 @@ export interface AccountDrillDownReport {
   limit: number;
   totalPages: number;
 }
+
+export interface ExecutiveReconciliationItem {
+  orderId: string;
+  orderNumber: string;
+  customerName?: string;
+  customerEmail?: string;
+  status: string;
+  totalAmountPaise: number;
+  paymentCapturedPaise: number;
+  refundDeductedPaise: number;
+  netRealizedPaise: number;
+  createdAt: string;
+}
+
+export interface ExpenseCategorySummary {
+  category: string;
+  amountPaise: number;
+  count: number;
+  percentage: number;
+}
+
+export interface ExecutiveSummaryMetrics {
+  totalOrdersCount: number;
+  grossOrderVolumePaise: number;
+  cancelledOrdersCount: number;
+  cancelledAmountPaise: number;
+  completedRefundsCount: number;
+  refundedAmountPaise: number;
+  totalDeductionsPaise: number;
+  completedOrdersCount: number;
+  netRealizedRevenuePaise: number;
+  totalExpensesPaise: number;
+  pendingApprovalExpensesPaise: number;
+  approvedExpensesPaise: number;
+  postedExpensesPaise: number;
+  expensesCount: number;
+  netProfitPaise: number;
+  netProfitMarginPercent: number;
+  isProfitable: boolean;
+  cashInBankPaise: number;
+  accountsPayablePaise: number;
+}
+
+export interface WaterfallStep {
+  label: string;
+  amountPaise: number;
+  type: 'positive' | 'negative' | 'subtotal' | 'total';
+}
+
+export interface ExecutiveSummaryReport {
+  period: {
+    startDate?: string;
+    endDate?: string;
+    preset?: PeriodPreset;
+  };
+  metrics: ExecutiveSummaryMetrics;
+  expenseBreakdown: ExpenseCategorySummary[];
+  recentReconciliation: ExecutiveReconciliationItem[];
+  waterfallSteps: WaterfallStep[];
+}

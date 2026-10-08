@@ -170,6 +170,12 @@ export class AdminFinanceController {
     return this.financeService.getProfitLossReport(query);
   }
 
+  @Get('reports/executive-summary')
+  @RequirePermissions(Permissions.FINANCE_VIEW)
+  async getExecutiveSummaryReport(@Query() query: QueryFinancialReportDto) {
+    return this.financeService.getExecutiveSummaryReport(query);
+  }
+
   @Get('reports/balance-sheet')
   @RequirePermissions(Permissions.FINANCE_VIEW)
   async getBalanceSheetReport(@Query() query: QueryFinancialReportDto) {

@@ -58,6 +58,7 @@ export const buildIdempotencyKey = {
   sale:       (orderId: string)            => `sale_order_${orderId}`,
   payment:    (paymentAttemptId: string)   => `payment_${paymentAttemptId}`,
   refund:     (refundId: string)           => `refund_${refundId}`,
+  cancellation: (orderId: string)          => `cancellation_order_${orderId}`,
   invoice:    (invoiceId: string)          => `invoice_${invoiceId}`,
   expense:    (expenseId: string)          => `expense_post_${expenseId}`,
   adjustment: (adjustmentId: string)      => `adjustment_${adjustmentId}`,

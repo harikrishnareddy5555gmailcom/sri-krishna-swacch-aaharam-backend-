@@ -314,5 +314,103 @@ export class FinanceRepository {
 
     return { entries, total };
   }
-}
 
+  /**
+   * Aggregates authoritative domain totals (orders, refunds, expenses) for executive financial summary.
+   */
+  async getExecutiveDomainAggregates(options?: { from?: Date; to?: Date }) {
+    const orderDateFilter: Prisma.DateTimeFilter = {};
+    const expenseDateFilter: Prisma.DateTimeFilter = {};
+    const refundDateFilter: Prisma.DateTimeFilter = {};
+
+    if (options?.from) {
+      orderDateFilter.gte = options.from;
+      expenseDateFilter.gte = options.from;
+      refundDateFilter.gte = options.from;
+    }
+    if (options?.to) {
+      orderDateFilter.lte = options.to;
+      expenseDateFilter.lte = options.to;
+      refundDateFilter.lte = options.to;
+    }
+
+    const hasDate = Boolean(options?.from || options?.to);
+
+    const [
+      ordersGrouped,
+      ordersTotal,
+      refundsCompleted,
+      expensesGrouped,
+      expensesByCategory,
+      recentOrders,
+    ] = await Promise.all([
+      // Orders grouped by status
+      this.prisma.order.groupBy({
+        by: ['status'],
+        where: hasDate ? { createdAt: orderDateFilter } : {},
+        _sum: { totalAmount: true },
+        _count: { id: true },
+      }),
+      // Total orders
+      this.prisma.order.aggregate({
+        where: hasDate ? { createdAt: orderDateFilter } : {},
+        _sum: { totalAmount: true },
+        _count: { id: true },
+      }),
+      // Completed refunds
+      this.prisma.refund.aggregate({
+        where: {
+          status: 'COMPLETED',
+          ...(hasDate ? { createdAt: refundDateFilter } : {}),
+        },
+        _sum: { amount: true },
+        _count: { id: true },
+      }),
+      // Expenses by status
+      this.prisma.expense.groupBy({
+        by: ['status'],
+        where: hasDate ? { expenseDate: expenseDateFilter } : {},
+        _sum: { amountPaise: true },
+        _count: { id: true },
+      }),
+      // Expenses by category (only approved/posted or submitted)
+      this.prisma.expense.groupBy({
+        by: ['category'],
+        where: {
+          status: { notIn: ['REJECTED', 'CANCELLED'] },
+          ...(hasDate ? { expenseDate: expenseDateFilter } : {}),
+        },
+        _sum: { amountPaise: true },
+        _count: { id: true },
+      }),
+      // Recent orders with customer and refund status
+      this.prisma.order.findMany({
+        where: hasDate ? { createdAt: orderDateFilter } : {},
+        take: 20,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          user: { select: { firstName: true, lastName: true, email: true } },
+          paymentAttempt: { select: { status: true, amount: true } },
+          refunds: { select: { status: true, amount: true } },
+        },
+      }),
+    ]);
+
+    return {
+      ordersGrouped,
+      ordersTotal,
+      refundsCompleted,
+      expensesGrouped,
+      expensesByCategory,
+      recentOrders,
+    };
+  }
+
+  async findCancelledOrders() {
+    return this.prisma.order.findMany({
+      where: { status: 'CANCELLED' },
+      select: { id: true, totalAmount: true, currency: true },
+    });
+  }
+
+}

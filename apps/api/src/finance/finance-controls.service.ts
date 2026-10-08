@@ -537,20 +537,9 @@ export class FinanceControlsService {
           description: `Transaction '${tx.id}' references non-existent Order ID '${tx.sourceId}'.`,
           detectedAt: nowIso,
         });
-      } else if (ord.status === 'CANCELLED') {
-        findings.push({
-          id: `rec_order_unexp_${tx.id}`,
-          controlType: ControlType.ORDER_RECONCILIATION,
-          severity: ControlSeverity.WARNING,
-          ruleCode: 'REC_UNEXPECTED_TRANSACTION',
-          transactionId: tx.id,
-          sourceType: FINANCE_SOURCE_TYPES.ORDER,
-          sourceId: tx.sourceId,
-          currency: tx.currency,
-          description: `Transaction '${tx.id}' exists for CANCELLED Order '${tx.sourceId}'.`,
-          detectedAt: nowIso,
-        });
       }
+      // Note: Orders with status 'CANCELLED' legitimately retain historical SALE transactions
+      // and cancellation reversal entries in double-entry bookkeeping, so they are not treated as unexpected.
     }
 
     // ─────────────────────────────────────────────────────────────────────────
