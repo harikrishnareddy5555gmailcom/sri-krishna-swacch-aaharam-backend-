@@ -1,0 +1,361 @@
+{
+  "published": {
+    "version": 1,
+    "publishedAt": "2026-10-01T14:41:56.933Z",
+    "publishedBy": "system-seed",
+    "announcement": {
+      "enabled": true,
+      "text": "Complimentary shipping across India on orders above ₹999 • Wood-Pressed at < 40°C",
+      "linkText": "Learn About Our Process",
+      "linkUrl": "#production-process"
+    },
+    "hero": {
+      "enabled": true,
+      "badgeText": "Wood-Pressed at < 40°C • 100% Pure & Unrefined",
+      "heading": "Nature's Wisdom",
+      "highlightText": "Bottled Pure.",
+      "description": "Traditional cold-pressed groundnut, coconut, sesame, and mustard oils extracted slowly in wooden chekku. Free of chemical solvents, zero additives, and naturally rich in aroma.",
+      "ctaText": "Shop the Collection",
+      "ctaLink": "/products",
+      "secondaryCtaText": "See How It's Made →",
+      "secondaryCtaLink": "#production-process",
+      "imageUrl": "/hero-oil.jpg",
+      "imageAlt": "Premium cold-pressed oil in an amber glass bottle surrounded by botanical ingredients on natural linen"
+    },
+    "categories": {
+      "enabled": true,
+      "heading": "Browse by Category",
+      "subheading": "Find exactly what you need for healthy, wholesome cooking",
+      "onlyAvailableOils": true
+    },
+    "featured": {
+      "enabled": true,
+      "badgeText": "Farm Fresh & Pure",
+      "heading": "Our Bestsellers",
+      "subheading": "Cold-pressed, unadulterated traditional oils for everyday culinary wellness",
+      "limit": 4
+    },
+    "process": {
+      "enabled": true,
+      "badgeText": "The Traditional Craft",
+      "heading": "Traditional Wood-Pressed Oils For A Reason",
+      "description": "We press slowly in seasoned Vagai wooden chekku at gentle RPMs. Never heated, never solvent-extracted.",
+      "cardTitle": "Cold-pressed at less than 40 degrees.",
+      "cardDescription": "Heat degrades delicate essential nutrients. In conventional commercial mills, friction drives temperatures past 100°C–200°C. Our slow wooden chekku operates at ambient temperatures, preserving natural vitamins, authentic nutty aroma, and original life force.",
+      "temperatureNote": "Wood Chekku Ambient Process: typically 32°C - 38°C without artificial heating",
+      "imageUrl": "/chekku-press.jpg",
+      "steps": [
+        {
+          "step": "01",
+          "title": "Farm-Direct Seeds",
+          "desc": "Hand-picked local groundnuts, coconuts and sesame seeds direct from organic growers."
+        },
+        {
+          "step": "02",
+          "title": "Sun-Drying",
+          "desc": "Seeds are dried naturally under sunlight to reach optimum moisture without artificial drying ovens."
+        },
+        {
+          "step": "03",
+          "title": "Wooden Chekku Press",
+          "desc": "Crushed slowly in stone and wood mortar at < 40°C with zero chemical solvents."
+        },
+        {
+          "step": "04",
+          "title": "Natural Cloth Filtration",
+          "desc": "Filtered gently through clean cotton cloth and naturally settled — no chemical bleaching."
+        }
+      ]
+    },
+    "story": {
+      "enabled": true,
+      "tag": "Our Philosophy",
+      "heading": "Nature's intelligence is our formulation guide.",
+      "paragraphs": [
+        "Sri Krishna Swacch Aaharam was founded on the belief that traditional cold-pressing and natural foods offer the purest path to everyday health and vitality.",
+        "Our oils are extracted using traditional wooden chekku — a process that preserves the full spectrum of nutrients, natural aroma, and inherent vitality that modern refining strips away."
+      ],
+      "ctaText": "Explore the Collection",
+      "ctaLink": "/products",
+      "imageUrl": "/auth-botanical.jpg"
+    },
+    "faqs": {
+      "enabled": true,
+      "badgeText": "Clear Answers",
+      "heading": "Frequently Asked Questions",
+      "faqs": [
+        {
+          "q": "What is wood-pressed (cold-pressed) oil?",
+          "a": "Wood-pressed oil is extracted by slowly crushing whole seeds in a traditional wooden mortar and pestle (chekku). Because it operates without external heat, the oil temperature remains below 40°C, preserving natural vitamins, antioxidants, and original aroma."
+        },
+        {
+          "q": "How is it different from refined supermarket oils?",
+          "a": "Refined oils undergo extreme industrial processing at over 200°C using chemical solvents (like hexane), chemical bleaching, and deodorization. Wood-pressed oils contain zero chemical additives, zero trans fats, and retain all their natural nutrients."
+        },
+        {
+          "q": "Why does wood-pressed oil smell and taste richer?",
+          "a": "Because it is pure and raw. Refined oils are stripped of all natural aromas and flavors through heat and chemicals. Cold-pressed oil retains the authentic aroma and taste of fresh seeds."
+        },
+        {
+          "q": "How should I store cold-pressed oils?",
+          "a": "Keep the bottles tightly closed in a cool, dark place away from direct sunlight. No refrigeration is required. Because our oils are natural with no artificial preservatives, they stay freshest within 6 to 9 months of packaging."
+        }
+      ]
+    },
+    "trust": {
+      "enabled": true,
+      "items": [
+        {
+          "title": "Free Shipping",
+          "sub": "On orders above ₹999"
+        },
+        {
+          "title": "Secure Packaging",
+          "sub": "Tamper-evident food-grade containers"
+        },
+        {
+          "title": "Return Assistance",
+          "sub": "Subject to policy verification & sealed condition"
+        },
+        {
+          "title": "Pure Extraction",
+          "sub": "Wood chekku pressed, zero mineral oil"
+        }
+      ]
+    },
+    "finalCta": {
+      "enabled": true,
+      "heading": "Ready to taste the difference?",
+      "description": "Browse our collection of wood-pressed oils extracted using time-honored artisanal methods.",
+      "primaryBtnText": "Browse Catalog",
+      "primaryBtnLink": "/products",
+      "secondaryBtnText": "Create Account",
+      "secondaryBtnLink": "/register"
+    },
+    "policies": {
+      "shippingDelivery": {
+        "title": "Shipping & Delivery Policy",
+        "slug": "shipping-delivery",
+        "isPublished": true,
+        "lastUpdated": "2026-10-01T14:41:56.933Z",
+        "content": "Orders are dispatched within 24 to 48 business hours from our facility. We partner with reliable courier services to ensure prompt delivery across India. Standard delivery timeline is 3-6 business days depending on location. Complimentary delivery is available for orders exceeding ₹999."
+      },
+      "returns": {
+        "title": "Returns Policy",
+        "slug": "returns",
+        "isPublished": true,
+        "lastUpdated": "2026-10-01T14:41:56.933Z",
+        "content": "Due to the perishable and consumable nature of edible oils, items are eligible for return or replacement strictly in cases of transit damage, packaging defect, leakage upon arrival, or incorrect item dispatch. Customers must report damage within 48 hours of delivery with photographic evidence."
+      },
+      "refunds": {
+        "title": "Refund Policy",
+        "slug": "refunds",
+        "isPublished": true,
+        "lastUpdated": "2026-10-01T14:41:56.933Z",
+        "content": "Approved refunds are initiated through our payment gateway back to the original payment source within 5-7 business working days after operational inspection and approval. Cash on delivery refunds are processed via secure bank NEFT/UPI transfer."
+      },
+      "cancellations": {
+        "title": "Order Cancellation Policy",
+        "slug": "cancellations",
+        "isPublished": true,
+        "lastUpdated": "2026-10-01T14:41:56.933Z",
+        "content": "Orders can be cancelled before dispatch directly from your account order dashboard. Once dispatched with an active courier tracking number, orders cannot be cancelled mid-transit and will follow standard return/refusal procedures."
+      },
+      "terms": {
+        "title": "Terms & Conditions",
+        "slug": "terms",
+        "isPublished": true,
+        "lastUpdated": "2026-10-01T14:41:56.933Z",
+        "content": "By browsing, accessing, or placing an order on Sri Krishna Swacch Aaharam, you agree to comply with our terms of service, payment agreements, and acceptable use guidelines. All product descriptions and pricing are subject to confirmation at time of order checkout."
+      },
+      "privacy": {
+        "title": "Privacy Policy",
+        "slug": "privacy",
+        "isPublished": true,
+        "lastUpdated": "2026-10-01T14:41:56.933Z",
+        "content": "Sri Krishna Swacch Aaharam is committed to protecting your personal data. We collect customer shipping address, phone number, and email strictly for order fulfillment, invoice generation, delivery updates, and support communication. We never sell customer information."
+      }
+    }
+  },
+  "draft": {
+    "version": 1,
+    "publishedAt": "2026-10-01T14:41:56.933Z",
+    "publishedBy": "system-seed",
+    "announcement": {
+      "enabled": true,
+      "text": "Complimentary shipping across India on orders above ₹999 • Wood-Pressed at < 40°C",
+      "linkText": "Learn About Our Process",
+      "linkUrl": "#production-process"
+    },
+    "hero": {
+      "enabled": true,
+      "badgeText": "Wood-Pressed at < 40°C • 100% Pure & Unrefined",
+      "heading": "Nature's Wisdom",
+      "highlightText": "Bottled Pure.",
+      "description": "Traditional cold-pressed groundnut, coconut, sesame, and mustard oils extracted slowly in wooden chekku. Free of chemical solvents, zero additives, and naturally rich in aroma.",
+      "ctaText": "Shop the Collection",
+      "ctaLink": "/products",
+      "secondaryCtaText": "See How It's Made →",
+      "secondaryCtaLink": "#production-process",
+      "imageUrl": "/hero-oil.jpg",
+      "imageAlt": "Premium cold-pressed oil in an amber glass bottle surrounded by botanical ingredients on natural linen"
+    },
+    "categories": {
+      "enabled": true,
+      "heading": "Browse by Category",
+      "subheading": "Find exactly what you need for healthy, wholesome cooking",
+      "onlyAvailableOils": true
+    },
+    "featured": {
+      "enabled": true,
+      "badgeText": "Farm Fresh & Pure",
+      "heading": "Our Bestsellers",
+      "subheading": "Cold-pressed, unadulterated traditional oils for everyday culinary wellness",
+      "limit": 4
+    },
+    "process": {
+      "enabled": true,
+      "badgeText": "The Traditional Craft",
+      "heading": "Traditional Wood-Pressed Oils For A Reason",
+      "description": "We press slowly in seasoned Vagai wooden chekku at gentle RPMs. Never heated, never solvent-extracted.",
+      "cardTitle": "Cold-pressed at less than 40 degrees.",
+      "cardDescription": "Heat degrades delicate essential nutrients. In conventional commercial mills, friction drives temperatures past 100°C–200°C. Our slow wooden chekku operates at ambient temperatures, preserving natural vitamins, authentic nutty aroma, and original life force.",
+      "temperatureNote": "Wood Chekku Ambient Process: typically 32°C - 38°C without artificial heating",
+      "imageUrl": "/chekku-press.jpg",
+      "steps": [
+        {
+          "step": "01",
+          "title": "Farm-Direct Seeds",
+          "desc": "Hand-picked local groundnuts, coconuts and sesame seeds direct from organic growers."
+        },
+        {
+          "step": "02",
+          "title": "Sun-Drying",
+          "desc": "Seeds are dried naturally under sunlight to reach optimum moisture without artificial drying ovens."
+        },
+        {
+          "step": "03",
+          "title": "Wooden Chekku Press",
+          "desc": "Crushed slowly in stone and wood mortar at < 40°C with zero chemical solvents."
+        },
+        {
+          "step": "04",
+          "title": "Natural Cloth Filtration",
+          "desc": "Filtered gently through clean cotton cloth and naturally settled — no chemical bleaching."
+        }
+      ]
+    },
+    "story": {
+      "enabled": true,
+      "tag": "Our Philosophy",
+      "heading": "Nature's intelligence is our formulation guide.",
+      "paragraphs": [
+        "Sri Krishna Swacch Aaharam was founded on the belief that traditional cold-pressing and natural foods offer the purest path to everyday health and vitality.",
+        "Our oils are extracted using traditional wooden chekku — a process that preserves the full spectrum of nutrients, natural aroma, and inherent vitality that modern refining strips away."
+      ],
+      "ctaText": "Explore the Collection",
+      "ctaLink": "/products",
+      "imageUrl": "/auth-botanical.jpg"
+    },
+    "faqs": {
+      "enabled": true,
+      "badgeText": "Clear Answers",
+      "heading": "Frequently Asked Questions",
+      "faqs": [
+        {
+          "q": "What is wood-pressed (cold-pressed) oil?",
+          "a": "Wood-pressed oil is extracted by slowly crushing whole seeds in a traditional wooden mortar and pestle (chekku). Because it operates without external heat, the oil temperature remains below 40°C, preserving natural vitamins, antioxidants, and original aroma."
+        },
+        {
+          "q": "How is it different from refined supermarket oils?",
+          "a": "Refined oils undergo extreme industrial processing at over 200°C using chemical solvents (like hexane), chemical bleaching, and deodorization. Wood-pressed oils contain zero chemical additives, zero trans fats, and retain all their natural nutrients."
+        },
+        {
+          "q": "Why does wood-pressed oil smell and taste richer?",
+          "a": "Because it is pure and raw. Refined oils are stripped of all natural aromas and flavors through heat and chemicals. Cold-pressed oil retains the authentic aroma and taste of fresh seeds."
+        },
+        {
+          "q": "How should I store cold-pressed oils?",
+          "a": "Keep the bottles tightly closed in a cool, dark place away from direct sunlight. No refrigeration is required. Because our oils are natural with no artificial preservatives, they stay freshest within 6 to 9 months of packaging."
+        }
+      ]
+    },
+    "trust": {
+      "enabled": true,
+      "items": [
+        {
+          "title": "Free Shipping",
+          "sub": "On orders above ₹999"
+        },
+        {
+          "title": "Secure Packaging",
+          "sub": "Tamper-evident food-grade containers"
+        },
+        {
+          "title": "Return Assistance",
+          "sub": "Subject to policy verification & sealed condition"
+        },
+        {
+          "title": "Pure Extraction",
+          "sub": "Wood chekku pressed, zero mineral oil"
+        }
+      ]
+    },
+    "finalCta": {
+      "enabled": true,
+      "heading": "Ready to taste the difference?",
+      "description": "Browse our collection of wood-pressed oils extracted using time-honored artisanal methods.",
+      "primaryBtnText": "Browse Catalog",
+      "primaryBtnLink": "/products",
+      "secondaryBtnText": "Create Account",
+      "secondaryBtnLink": "/register"
+    },
+    "policies": {
+      "shippingDelivery": {
+        "title": "Shipping & Delivery Policy",
+        "slug": "shipping-delivery",
+        "isPublished": true,
+        "lastUpdated": "2026-10-01T14:41:56.933Z",
+        "content": "Orders are dispatched within 24 to 48 business hours from our facility. We partner with reliable courier services to ensure prompt delivery across India. Standard delivery timeline is 3-6 business days depending on location. Complimentary delivery is available for orders exceeding ₹999."
+      },
+      "returns": {
+        "title": "Returns Policy",
+        "slug": "returns",
+        "isPublished": true,
+        "lastUpdated": "2026-10-01T14:41:56.933Z",
+        "content": "Due to the perishable and consumable nature of edible oils, items are eligible for return or replacement strictly in cases of transit damage, packaging defect, leakage upon arrival, or incorrect item dispatch. Customers must report damage within 48 hours of delivery with photographic evidence."
+      },
+      "refunds": {
+        "title": "Refund Policy",
+        "slug": "refunds",
+        "isPublished": true,
+        "lastUpdated": "2026-10-01T14:41:56.933Z",
+        "content": "Approved refunds are initiated through our payment gateway back to the original payment source within 5-7 business working days after operational inspection and approval. Cash on delivery refunds are processed via secure bank NEFT/UPI transfer."
+      },
+      "cancellations": {
+        "title": "Order Cancellation Policy",
+        "slug": "cancellations",
+        "isPublished": true,
+        "lastUpdated": "2026-10-01T14:41:56.933Z",
+        "content": "Orders can be cancelled before dispatch directly from your account order dashboard. Once dispatched with an active courier tracking number, orders cannot be cancelled mid-transit and will follow standard return/refusal procedures."
+      },
+      "terms": {
+        "title": "Terms & Conditions",
+        "slug": "terms",
+        "isPublished": true,
+        "lastUpdated": "2026-10-01T14:41:56.933Z",
+        "content": "By browsing, accessing, or placing an order on Sri Krishna Swacch Aaharam, you agree to comply with our terms of service, payment agreements, and acceptable use guidelines. All product descriptions and pricing are subject to confirmation at time of order checkout."
+      },
+      "privacy": {
+        "title": "Privacy Policy",
+        "slug": "privacy",
+        "isPublished": true,
+        "lastUpdated": "2026-10-01T14:41:56.933Z",
+        "content": "Sri Krishna Swacch Aaharam is committed to protecting your personal data. We collect customer shipping address, phone number, and email strictly for order fulfillment, invoice generation, delivery updates, and support communication. We never sell customer information."
+      }
+    }
+  },
+  "hasUnpublishedChanges": false,
+  "lastModifiedAt": "2026-10-01T14:41:57.152Z",
+  "lastModifiedBy": "system-init"
+}

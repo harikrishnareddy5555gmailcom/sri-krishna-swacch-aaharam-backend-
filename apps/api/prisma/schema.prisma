@@ -1,0 +1,2101 @@
+// =============================================================================
+// VISHKARAA — PRISMA DATABASE SCHEMA
+// =============================================================================
+//
+// Database: PostgreSQL
+// ORM: Prisma
+//
+// Design Principles:
+// - UUIDs for all primary keys (better for distributed systems, no sequence exposure)
+// - Timestamps on all entities (createdAt, updatedAt)
+// - Soft-delete where appropriate (archiving via status fields)
+// - Enum types for status fields
+// - All financial amounts in smallest currency unit (paise for INR)
+//
+// Current Schema Includes:
+//   User, Role (enum), Permission
+//   Category, Product, ProductVariant, ProductMedia (Catalog)
+//   Cart, CartItem
+//   CheckoutSession, CheckoutItemSnapshot
+//   PaymentAttempt, WebhookEvent
+//   Order, OrderItem   ← Phase 08A: fully revised with idempotency + snapshot design
+//   Return, Refund     ← tables exist; not yet linked to Order (Phase 09+)
+//   AuditLog
+//
+// Future Schema (Not implemented yet):
+//   Customer, CustomerUser, CustomerConfig
+//   Inventory, StockMovement
+//
+// Relationship Map:
+//   Category → Products (hierarchical, unlimited depth)
+//   Product → ProductVariants, ProductMedia
+//   User → Orders (RESTRICT)
+//   CheckoutSession → CheckoutItemSnapshot (authoritative price snapshot)
+//   CheckoutSession → PaymentAttempt (one or more per session)
+//   PaymentAttempt → Order (one-to-one, RESTRICT; CAPTURED only)
+//   Order → OrderItem (CASCADE — items are part of the order entity)
+//   All actions → AuditLog
+//
+// Future:
+//   Customer → Users (additive, non-breaking to current model)
+//   Inventory → ProductVariants (additive)
+//   Order → Return, Refund (Phase 09+)
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  USER
+  // Future: CUSTOMER_ADMIN, CUSTOMER_USER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+}
+
+enum AddressLabel {
+  HOME
+  WORK
+  OTHER
+}
+
+enum OrderStatus {
+  // Phase 08 — order finalization states
+  CONFIRMED    // Successfully created from CAPTURED payment; default/only creation state
+  CANCELLED    // Cancelled before fulfilment; admin or system only
+
+  // Phase 09 scope — fulfilment states (added when fulfilment logic is implemented)
+  PROCESSING
+  SHIPPED
+  DELIVERED
+
+  // Phase 09+ scope — return/refund states (added when return architecture is designed)
+  // RETURN_REQUESTED
+  // RETURNED
+  // REFUND_PENDING
+  // PARTIALLY_REFUNDED
+  // REFUNDED
+}
+
+enum ReturnStatus {
+  REQUESTED
+  UNDER_REVIEW
+  APPROVED
+  IN_TRANSIT
+  RECEIVED
+  INSPECTING
+  ACCEPTED
+  REFUND_PENDING
+  COMPLETED
+  REJECTED
+  CANCELLED
+}
+
+enum ReturnReason {
+  DAMAGED_PRODUCT
+  WRONG_PRODUCT
+  NOT_AS_DESCRIBED
+  DEFECTIVE
+  CHANGED_MIND
+  WRONG_ITEM
+  OTHER
+}
+
+enum ReturnItemCondition {
+  UNOPENED_SEALED
+  OPENED_UNUSED
+  DAMAGED_IN_TRANSIT
+  DEFECTIVE_PRODUCT
+  CUSTOMER_DAMAGED
+  WRONG_ITEM_SENT
+  COUNTERFEIT_SUSPECT
+}
+
+enum ReturnItemDisposition {
+  RESTOCK
+  REFURBISH
+  QUARANTINE
+  SCRAP_WRITE_OFF
+  RETURN_TO_CUSTOMER
+}
+
+enum RefundType {
+  FULL
+  PARTIAL
+}
+
+enum RefundStatus {
+  REQUESTED   // Initial state — awaiting approval or auto-dispatch
+  APPROVED    // Approved by authorized admin — ready for gateway dispatch
+  REJECTED    // Rejected by admin — terminal, no refund issued
+  PROCESSING  // Gateway call dispatched — awaiting settlement confirmation
+  COMPLETED   // Gateway confirmed settlement — terminal, funds returned
+  FAILED      // Gateway permanently failed — may be retried (max 3)
+  CANCELLED   // Cancelled by admin before dispatch — terminal
+}
+
+enum RefundSource {
+  MANUAL             // Discretionary admin-initiated refund
+  ORDER_CANCELLATION // Triggered by admin order cancellation
+  RETURN             // Triggered by physical return verification (Phase 10+)
+  DAMAGED_ITEM       // Instant partial refund for transit damage
+  ADMIN_ADJUSTMENT   // Goodwill / post-purchase price match
+  SYSTEM             // Automated remediation by system
+}
+
+enum RefundAttemptStatus {
+  INITIATED                // Attempt record created, gateway call in progress
+  PENDING                  // Gateway acknowledged, awaiting async settlement
+  PROCESSED                // Gateway confirmed successful settlement
+  FAILED                   // Gateway returned a permanent failure
+  RECONCILIATION_REQUIRED  // Network timeout / ambiguous gateway response
+}
+
+enum ReservationStatus {
+  PENDING
+  COMMITTED
+  RELEASED
+  EXPIRED
+}
+
+enum InventoryMovementType {
+  INITIAL_STOCK
+  CHECKOUT_RESERVED
+  RESERVATION_RELEASED
+  RESERVATION_EXPIRED
+  ORDER_COMMITTED
+  ORDER_CANCELLED
+  ORDER_SHIPPED
+  RETURN_RESTOCKED
+  ADMIN_ADJUSTMENT_INCREASE
+  ADMIN_ADJUSTMENT_DECREASE
+}
+
+enum FeatureStatus {
+  ACTIVE
+  INACTIVE
+  HIDDEN
+  BETA
+  COMING_SOON
+  MAINTENANCE
+}
+
+enum PermissionEffect {
+  ALLOW
+  DENY
+}
+
+enum CategoryStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum ProductVariantStatus {
+  ACTIVE
+  INACTIVE
+  DISCONTINUED
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  DOCUMENT
+}
+
+enum CartStatus {
+  ACTIVE
+  MERGED
+  ABANDONED
+  CONVERTED
+}
+
+enum CheckoutStatus {
+  ACTIVE
+  EXPIRED
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  CREATED
+  PENDING
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  CANCELLED
+  // Set when provider reports CAPTURED but local state was FAILED/CANCELLED.
+  // Requires admin investigation. Phase 08 must not treat as normal CAPTURED.
+  REQUIRES_RECONCILIATION
+}
+
+enum InvoiceStatus {
+  ISSUED
+  CANCELLED
+}
+
+enum ShipmentStatus {
+  CREATED
+  PACKING
+  PACKED
+  READY_TO_SHIP
+  SHIPPED
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  DELIVERY_FAILED
+  RTO_INITIATED
+  RTO_DELIVERED
+  CANCELLED
+  LOST
+}
+
+// =============================================================================
+// USER
+// =============================================================================
+
+model User {
+  id            String     @id @default(uuid())
+  email         String     @unique
+  passwordHash  String
+  firstName     String
+  lastName      String
+  role          UserRole   @default(USER)
+  status        UserStatus @default(ACTIVE)
+  emailVerifiedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  orders               Order[]
+  returns              Return[]
+  auditLogs            AuditLog[]     @relation("AuditActor")
+  affectedAudits       AuditLog[]     @relation("AuditAffectedUser")
+  userPermissions      UserPermission[]
+  refreshTokens        RefreshToken[]
+  carts                Cart[]
+  checkoutSessions     CheckoutSession[]
+  paymentAttempts      PaymentAttempt[]
+  // Phase 09B refund relations
+  refundsAsUser        Refund[]       @relation("UserRefunds")
+  refundsRequested     Refund[]       @relation("RefundsRequestedBy")
+  refundsApproved      Refund[]       @relation("RefundsApprovedBy")
+  refundsRejected      Refund[]       @relation("RefundsRejectedBy")
+  // Phase 12 billing relations
+  invoices             Invoice[]
+  // Phase 13 shipping relations
+  shipments            Shipment[]
+  // Phase 14 notification relations
+  notifications        Notification[]
+  notificationPreferences NotificationPreference[]
+  // Phase 20D.5 wishlist relations
+  wishlistItems        WishlistItem[]
+  // Phase 20D.8.2A saved addresses relation
+  addresses            UserAddress[]
+
+  // Future: customerId String? — additive Customer/Organization link
+  // Future: customer   Customer? @relation(fields: [customerId], references: [id])
+
+  @@index([email])
+  @@index([role])
+  @@index([status])
+  @@map("users")
+}
+
+// =============================================================================
+// USER SAVED DELIVERY ADDRESS (Phase 20D.8.2A)
+// =============================================================================
+// Design Principles:
+// - Multiple saved delivery addresses owned strictly by one user.
+// - PostgreSQL partial unique index ensures at most one default address per user.
+// - Decoupled from Order/CheckoutSession shipping snapshots.
+// =============================================================================
+
+model UserAddress {
+  id            String       @id @default(uuid())
+  userId        String
+  recipientName String
+  phone         String
+  line1         String
+  line2         String?
+  city          String
+  state         String
+  postalCode    String
+  country       String       @default("IN")
+  landmark      String?
+  label         AddressLabel @default(HOME)
+  isDefault     Boolean      @default(false)
+
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, isDefault])
+  @@map("user_addresses")
+}
+
+
+// =============================================================================
+// CATALOG
+// =============================================================================
+// Design Notes:
+// - Categories support unlimited hierarchical depth (self-referential parentId)
+// - Products are catalog identity only — no inventory quantities here
+// - ProductVariants hold the purchasable SKUs with monetary values in paise
+// - ProductMedia is provider-agnostic — url is resolved server-side
+// - Soft-delete is implemented via status (ARCHIVED) not physical deletion
+// =============================================================================
+
+model Category {
+  id          String         @id @default(uuid())
+  name        String
+  slug        String         @unique
+  description String?
+  imageUrl    String?
+  parentId    String?        // Nullable — null means root category
+  status      CategoryStatus @default(ACTIVE)
+  sortOrder   Int            @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Self-referential hierarchy
+  parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryHierarchy")
+
+  // Products in this category
+  products Product[]
+
+  @@index([slug])
+  @@index([status])
+  @@index([parentId])
+  @@index([sortOrder])
+  @@map("categories")
+}
+
+model Product {
+  id               String        @id @default(uuid())
+  name             String
+  slug             String        @unique
+  shortDescription String?
+  description      String?
+  categoryId       String
+  status           ProductStatus @default(DRAFT)
+  brand            String?
+  images           String[]      @default([]) // Shared product gallery images
+  isReturnable     Boolean       @default(true) // Phase 10: catalog-level returnability policy
+  metadata         Json?         // Free-form product metadata for future extension
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  category Category       @relation(fields: [categoryId], references: [id])
+  variants ProductVariant[]
+  media    ProductMedia[]
+  cartItems CartItem[]
+  checkoutItems CheckoutItemSnapshot[]
+  orderItems    OrderItem[]           // Soft back-reference from OrderItem.productId (SetNull)
+  wishlistItems WishlistItem[]
+
+  // Future: inventory entries, cart items will reference this productId
+
+  @@index([slug])
+  @@index([status])
+  @@index([categoryId])
+  @@index([createdAt])
+  @@map("products")
+}
+
+model ProductVariant {
+  id             String               @id @default(uuid())
+  productId      String
+  name           String               // e.g. "500ml", "1L", "2L"
+  packageSize    String?              // e.g. "1 L", "500 ml", "15 kg Tin"
+  sku            String               @unique
+  price          Int                  // In smallest currency unit (paise for INR)
+  compareAtPrice Int?                 // Optional was/compare-at price (paise)
+  currency       String               @default("INR")
+  status         ProductVariantStatus @default(ACTIVE)
+  sortOrder      Int                  @default(0)
+  isDefault      Boolean              @default(false)
+  imageUrl       String?              // Dedicated container hero image for this package size
+  mediaUrls      String[]             @default([]) // Optional secondary gallery images specific to this size
+  attributes     Json?                // Free-form: { "size": "500ml", "weight": "500g" }
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  product Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  media   ProductMedia[]
+  cartItems CartItem[]
+  checkoutItems CheckoutItemSnapshot[]
+  orderItems    OrderItem[]           // Soft back-reference from OrderItem.variantId (SetNull)
+  // Phase 11 inventory relations
+  inventoryItem         InventoryItem?
+  inventoryReservations InventoryReservation[]
+  inventoryMovements    InventoryMovement[]
+  // Phase 13 shipment items
+  shipmentItems         ShipmentItem[]
+  // Phase 20D.5 wishlist relations
+  wishlistItems         WishlistItem[]
+
+  @@index([productId])
+  @@index([packageSize])
+  @@index([sku])
+  @@index([status])
+  @@map("product_variants")
+}
+
+model ProductMedia {
+  id        String    @id @default(uuid())
+  productId String
+  variantId String?   // Optionally scoped to a specific variant
+  mediaType MediaType @default(IMAGE)
+
+  // Provider-independent storage reference.
+  // The actual URL is resolved server-side by the media service.
+  // Never store provider credentials here.
+  url       String
+  altText   String?
+  sortOrder Int     @default(0)
+  isPrimary Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  // Relations
+  product Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@index([productId])
+  @@index([variantId])
+  @@index([isPrimary])
+  @@map("product_media")
+}
+
+// =============================================================================
+// CART
+// =============================================================================
+// Design Principles:
+// - Direct individual user model (guest + authenticated user)
+// - Cryptographically random guest cart tokens (stored hashed as SHA-256)
+// - Single active user cart per authenticated user (managed via status)
+// - Monetary values in smallest currency unit (paise) as integers
+// - CartItem stores authoritative unit price snapshot from ProductVariant
+// - Uniqueness constraint on [cartId, productVariantId] guarantees no duplicate rows
+// =============================================================================
+
+model Cart {
+  id             String      @id @default(uuid())
+  userId         String?     // Nullable: null for guest cart, set for authenticated user
+  status         CartStatus  @default(ACTIVE)
+  currency       String      @default("INR")
+  guestTokenHash String?     // SHA-256 hash of the guest cart token
+  expiresAt      DateTime?   // Expiration for guest carts (30 days)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  // Relations
+  user             User?             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items            CartItem[]
+  checkoutSessions CheckoutSession[]
+
+  @@index([userId])
+  @@index([guestTokenHash])
+  @@index([status])
+  @@map("carts")
+}
+
+model CartItem {
+  id               String   @id @default(uuid())
+  cartId           String
+  productId        String
+  productVariantId String
+  quantity         Int
+  unitPrice        Int      // Price snapshot in paise at time of add/update
+  currency         String   @default("INR")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Relations
+  cart           Cart           @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product        Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
+  productVariant ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Restrict)
+
+  @@unique([cartId, productVariantId])
+  @@index([cartId])
+  @@index([productId])
+  @@index([productVariantId])
+  @@map("cart_items")
+}
+
+// =============================================================================
+// CHECKOUT
+// =============================================================================
+// Design Principles:
+// - Dedicated boundary between Cart and (Future) Payment / Order
+// - Does NOT mutate Cart into an Order; Cart and Order remain distinct
+// - Authoritative snapshot of products, variants, quantities, and prices
+// - Time-limited sessions with automatic expiration verification
+// - Integer minor-unit monetary arithmetic (paise)
+// =============================================================================
+
+model CheckoutSession {
+  id             String         @id @default(uuid())
+  userId         String
+  cartId         String?        // Nullable: SetNull on cart cleanup ensures historical snapshots are preserved
+  status         CheckoutStatus @default(ACTIVE)
+  currency       String         @default("INR")
+  subtotal       Int            // Server-authoritative subtotal in paise
+  idempotencyKey String?        // Client-supplied idempotency key
+  expiresAt      DateTime       // Checkout session expiration (e.g. 30 minutes from creation)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  // Shipping address snapshot (Phase 08 — captured at checkout time).
+  // All fields are nullable: address may be collected before or after checkout init.
+  // These values are copied immutably to Order.shipping* at order finalization.
+  shippingName       String?
+  shippingPhone      String?
+  shippingLine1      String?
+  shippingLine2      String?
+  shippingCity       String?
+  shippingState      String?
+  shippingPostalCode String?
+  shippingCountry    String?   // ISO 3166-1 alpha-2, e.g. "IN"
+
+  // Relations
+  user            User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cart            Cart?                  @relation(fields: [cartId], references: [id], onDelete: SetNull)
+  items           CheckoutItemSnapshot[]
+  paymentAttempts PaymentAttempt[]
+  orders          Order[]
+  // Phase 11 inventory reservations
+  inventoryReservations InventoryReservation[]
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId])
+  @@index([cartId])
+  @@index([status])
+  @@index([expiresAt])
+  @@map("checkout_sessions")
+}
+
+model CheckoutItemSnapshot {
+  id                String   @id @default(uuid())
+  checkoutSessionId String
+  productId         String
+  productVariantId  String
+  productName       String   // Authoritative product name snapshot
+  variantName       String   // Authoritative variant name snapshot (e.g. "500ml") — Phase 08
+  productSku        String   // Authoritative SKU snapshot
+  quantity          Int
+  unitPrice         Int      // Authoritative unit price in paise at snapshot creation
+  lineTotal         Int      // quantity * unitPrice in paise
+  currency          String   @default("INR")
+  primaryImageUrl   String?
+  createdAt         DateTime @default(now())
+
+  // Relations
+  checkoutSession CheckoutSession @relation(fields: [checkoutSessionId], references: [id], onDelete: Cascade)
+  product         Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
+  productVariant  ProductVariant  @relation(fields: [productVariantId], references: [id], onDelete: Restrict)
+
+  @@index([checkoutSessionId])
+  @@index([productId])
+  @@index([productVariantId])
+  @@map("checkout_item_snapshots")
+}
+
+// =============================================================================
+// PAYMENT
+// =============================================================================
+// Design Principles:
+// - Provider-independent: Domain layer records attempt state and standard identifiers.
+// - Authoritative amounts: Amount and currency are derived directly from CheckoutSession.
+// - Card/credential privacy: Never store card number, CVV, PIN, or provider secrets.
+// - Explicit state machine: CREATED -> PENDING -> AUTHORIZED -> CAPTURED / FAILED / CANCELLED.
+// - Strict idempotency: [userId, idempotencyKey] uniqueness prevents duplicate attempts.
+// =============================================================================
+
+model PaymentAttempt {
+  id                String        @id @default(uuid())
+  userId            String
+  checkoutSessionId String
+  amount            Int           // Authoritative payable amount in paise
+  currency          String        @default("INR")
+  status            PaymentStatus @default(CREATED)
+  provider          String        // e.g. "MOCK", "RAZORPAY"
+  providerOrderId   String?       // Provider external order reference
+  providerPaymentId String?       // Provider external payment/charge reference
+  idempotencyKey    String?       // Client-supplied idempotency key
+  failureCode       String?       // Standardized failure code if failed
+  failureMessage    String?       // Safe, sanitized failure description
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  // Relations
+  user            User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  checkoutSession CheckoutSession @relation(fields: [checkoutSessionId], references: [id], onDelete: Restrict)
+  webhookEvents   WebhookEvent[]
+  order           Order?          // Back-reference: one-to-one; FK lives on Order.paymentAttemptId
+  // Phase 09B: refund back-references (FK lives on Refund/RefundAttempt)
+  refunds         Refund[]
+  refundAttempts  RefundAttempt[]
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId])
+  @@index([checkoutSessionId])
+  @@index([status])
+  @@index([providerOrderId])
+  @@index([createdAt])
+  @@map("payment_attempts")
+}
+
+// =============================================================================
+// WEBHOOK EVENTS (Phase 07B — Razorpay Webhook Idempotency)
+// =============================================================================
+// Design Principles:
+// - One row per unique provider event ID; guarantees at-most-once processing.
+// - Upsert on (provider, eventId) — unique constraint prevents duplicate rows.
+// - processedAt is set on successful processing; null means in-flight or errored.
+// - paymentAttemptId is optional (some events may not map to an existing attempt yet).
+// - No cascade-delete: webhook history must be preserved for audit purposes (RESTRICT).
+// =============================================================================
+
+model WebhookEvent {
+  id               String    @id @default(uuid())
+  provider         String    // e.g. "RAZORPAY"
+  eventId          String    // Provider-supplied unique event ID
+  eventType        String    // e.g. "payment.captured"
+  paymentAttemptId String?   // FK to PaymentAttempt (nullable: event may arrive before attempt)
+  rawPayload       Json      // Full sanitised webhook payload (for audit / replay)
+  processedAt      DateTime? // Set when event is successfully handled; null = pending / errored
+  createdAt        DateTime  @default(now())
+
+  // FK: Restrict deletion of PaymentAttempt while webhook events reference it
+  paymentAttempt PaymentAttempt? @relation(fields: [paymentAttemptId], references: [id], onDelete: Restrict)
+
+  // Prevent duplicate processing of the same provider event
+  @@unique([provider, eventId])
+  @@index([provider])
+  @@index([paymentAttemptId])
+  @@index([eventType])
+  @@index([createdAt])
+  @@map("webhook_events")
+}
+
+// =============================================================================
+// ORDER  (Phase 08A — Order Finalization)
+// =============================================================================
+// Design Principles:
+// - Orders are created ONLY from a CAPTURED PaymentAttempt (server-authoritative).
+// - paymentAttemptId is UNIQUE: one CAPTURED payment produces exactly one Order.
+// - checkoutSessionId is indexed but NOT unique: a session may have multiple
+//   failed PaymentAttempts before one CAPTURED succeeds.
+// - Orders are created directly as CONFIRMED — no PENDING state is ever committed.
+// - All monetary values are in integer paise (no floating point).
+// - Shipping address is an immutable snapshot copied from CheckoutSession at creation.
+// - OrderItems are immutable after creation (no updatedAt).
+// - Financial FKs use RESTRICT: orders cannot be deleted if payment/session references exist.
+// - Future: returns, refunds, refundedAmount will be added in Phase 09+.
+// =============================================================================
+
+model Order {
+  id                String      @id @default(uuid())
+
+  // Human-readable order number. Format: VN-YYYYMM-XXXXXXXX (8 uppercase hex chars).
+  // Generated from randomUUID() fragment — no counter table, no row lock.
+  // PostgreSQL UNIQUE constraint is authoritative. P2002 triggers bounded retry (max 3).
+  orderNumber       String      @unique
+
+  userId            String
+  checkoutSessionId String      // NOT @unique — session may have multiple payment attempts
+  paymentAttemptId  String      @unique // Primary idempotency anchor: one CAPTURED → one Order
+
+  status            OrderStatus @default(CONFIRMED)
+
+  // Monetary snapshot — all integer paise, validated before write
+  subtotal          Int         // SUM of OrderItem.lineTotal (paise)
+  tax               Int         @default(0)  // Reserved for future GST engine
+  discount          Int         @default(0)  // Reserved for future coupon engine
+  totalAmount       Int         // MUST equal PaymentAttempt.amount at finalization (paise)
+  currency          String      @default("INR") // MUST equal PaymentAttempt.currency
+
+  // Immutable shipping address snapshot — copied from CheckoutSession at finalization.
+  // Historical orders are never affected by future address changes.
+  shippingName       String?
+  shippingPhone      String?
+  shippingLine1      String?
+  shippingLine2      String?
+  shippingCity       String?
+  shippingState      String?
+  shippingPostalCode String?
+  shippingCountry    String?   // ISO 3166-1 alpha-2, e.g. "IN"
+
+  // Lifecycle timestamps
+  confirmedAt       DateTime?   // Set at creation; equals createdAt in practice
+  cancelledAt       DateTime?   // Set only on CANCELLED transition
+  deliveredAt       DateTime?   // Phase 10: Set exclusively when order transitions to DELIVERED
+
+  // Phase 20D.5: Customer cancellation request fields
+  cancellationRequestedAt DateTime?
+  cancellationReason      String?
+  cancellationApprovedAt  DateTime?
+  cancellationRejectedAt  DateTime?
+  cancellationAdminNotes  String?
+
+  notes             String?     // Reserved for admin/system notes
+
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  // Relations
+  user              User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  checkoutSession   CheckoutSession @relation(fields: [checkoutSessionId], references: [id], onDelete: Restrict)
+  paymentAttempt    PaymentAttempt  @relation(fields: [paymentAttemptId], references: [id], onDelete: Restrict)
+  items             OrderItem[]
+  auditLogs         AuditLog[]
+
+  // Phase 09+ relations — back-references required by Prisma for Return/Refund FKs.
+  // These arrays are not populated or used in Phase 08 logic.
+  returns           Return[]
+  refunds           Refund[]
+  // Phase 11 inventory reservations committed to this order
+  inventoryReservations InventoryReservation[]
+  // Phase 12 billing invoice
+  invoice           Invoice?
+  // Phase 13 shipments
+  shipments         Shipment[]
+
+  @@index([userId])
+  @@index([checkoutSessionId])  // Normal index only — NOT unique
+  @@index([status])
+  @@index([createdAt])
+  @@map("orders")
+}
+
+// =============================================================================
+// ORDER ITEM  (Phase 08A — Immutable Snapshot)
+// =============================================================================
+// Design Principles:
+// - Created exclusively from CheckoutItemSnapshot rows at order finalization.
+// - Never updated after creation (no updatedAt field).
+// - productId/variantId are soft references (SetNull on deletion);
+//   the snapshot fields are the authoritative historical record.
+// - lineTotal is pre-computed (quantity * unitPrice) and verified at finalization.
+//   PostgreSQL CHECK constraint enforces the invariant.
+// =============================================================================
+
+model OrderItem {
+  id               String  @id @default(uuid())
+  orderId          String
+
+  // Soft references — traceability only; product/variant may be archived.
+  // Snapshot fields below are the authoritative historical record.
+  productId        String? // SetNull if product is deleted/archived
+  variantId        String? // SetNull if variant is discontinued
+
+  // Immutable snapshot — sourced exclusively from CheckoutItemSnapshot at finalization
+  productName      String  // Authoritative product name at checkout time
+  variantName      String  // Authoritative variant name at checkout time (e.g. "500ml")
+  productSku       String  // Authoritative SKU at checkout time
+  primaryImageUrl  String? // Snapshot URL at checkout time
+
+  // Monetary snapshot — all integer paise
+  quantity         Int     // Must be > 0 (enforced by PostgreSQL CHECK)
+  unitPrice        Int     // Must be >= 0 (enforced by PostgreSQL CHECK)
+  lineTotal        Int     // MUST equal quantity * unitPrice (enforced by PostgreSQL CHECK)
+  currency         String  @default("INR")
+
+  createdAt        DateTime @default(now())
+  // No updatedAt — OrderItem is immutable once created.
+
+  // Relations
+  order            Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product          Product?       @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productVariant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  returnItems      ReturnItem[]   // Phase 10: return quantity tracking
+  shipmentItems    ShipmentItem[] // Phase 13: shipment package items
+
+  @@index([orderId])
+  @@index([productId])
+  @@index([variantId])
+  @@map("order_items")
+}
+
+// =============================================================================
+// RETURN  (Phase 10B — RMA Aggregate Root)
+// =============================================================================
+// Design Principles:
+// - rmaNumber: human-readable RMA-YYYYMM-XXXXXXXX, PostgreSQL UNIQUE is authoritative.
+// - idempotencyKey: prevents duplicate return requests; bridges crash-safe refund linkage.
+//   Format used for refund linkage: "ret_ref_{returnId}".
+// - eligibleRefundPaise: computed at ACCEPTED transition; immutable thereafter.
+// - All monetary fields in integer paise. No floating point.
+// - Return.status drives Allocation() formula in ReturnItem quantity accounting.
+// =============================================================================
+
+model Return {
+  id                  String       @id @default(uuid())
+
+  // Human-readable reference. Format: RMA-YYYYMM-XXXXXXXX (8 uppercase hex chars).
+  rmaNumber           String       @unique
+
+  orderId             String
+  userId              String
+
+  status              ReturnStatus @default(REQUESTED)
+  customerReason      ReturnReason
+  customerNotes       String?
+
+  // SSRF-safe evidence: relative storage keys or strictly validated asset URIs.
+  // Format: "returns/ord_123/proof_1.jpg" or validated https://assets.vishkaraa.com/... URI.
+  evidenceKeys        String[]     @default([])
+
+  // Logistics tracking (Phase 12: automated integration)
+  returnCarrier       String?
+  trackingNumber      String?
+  receivedAt          DateTime?    // Set when physical parcel arrives at dock
+
+  // Actor tracking
+  requestedById       String       // User who submitted the request
+  reviewedById        String?      // Admin who approved/rejected
+  reviewedAt          DateTime?
+  rejectionReason     String?
+  inspectedById       String?      // Warehouse inspector
+  inspectedAt         DateTime?
+  inspectionNotes     String?
+
+  // Financial summary — computed at ACCEPTED transition
+  eligibleRefundPaise Int          @default(0)
+  refundedPaise       Int          @default(0)
+  currency            String       @default("INR")
+
+  // Crash-safe refund idempotency key. Set atomically with ACCEPTED transition.
+  // Value: "ret_ref_{id}" — deterministic derivation from returnId.
+  idempotencyKey      String?      @unique
+
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  // Relations
+  order   Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  user    User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  items   ReturnItem[]
+  refunds Refund[]
+
+  @@index([orderId])
+  @@index([userId])
+  @@index([status])
+  @@map("returns")
+}
+
+// =============================================================================
+// RETURN ITEM  (Phase 10B — Line-item quantity & inspection record)
+// =============================================================================
+// Design Principles:
+// - requestedQuantity: immutable after creation; set by customer.
+// - receivedQuantity: set by warehouse on physical parcel scan (RECEIVED state).
+// - acceptedQuantity: set by inspector; drives itemRefundPaise computation.
+// - rejectedQuantity: rejected at inspection; customer cannot receive double refund.
+// - Unique constraint on (returnId, orderItemId): one row per item per return.
+// - Row-level lock on OrderItem prevents concurrent over-allocation.
+// =============================================================================
+
+model ReturnItem {
+  id                String                 @id @default(uuid())
+  returnId          String
+  orderItemId       String
+
+  // Quantity lifecycle — each field set at a different stage
+  requestedQuantity Int                    // Immutable: customer-declared quantity
+  receivedQuantity  Int                    @default(0) // Warehouse: physical scan
+  acceptedQuantity  Int                    @default(0) // Inspector: accepted units
+  rejectedQuantity  Int                    @default(0) // Inspector: rejected units
+
+  // Customer-declared metadata
+  reason            ReturnReason
+  customerNotes     String?
+
+  // Inspection metadata — set during INSPECTING → ACCEPTED/REJECTED transition
+  condition         ReturnItemCondition?
+  disposition       ReturnItemDisposition?
+  inspectorNotes    String?
+
+  // Financial: pro-rata paise for accepted units; computed at inspection
+  itemRefundPaise   Int                    @default(0)
+
+  // Phase 11: Restock tracking
+  isRestocked       Boolean                @default(false)
+  restockedAt       DateTime?
+
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  // Relations
+  return    Return    @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+
+  // One return-item row per (return, order-item) pair — prevents duplicate line items
+  @@unique([returnId, orderItemId])
+  @@index([returnId])
+  @@index([orderItemId])
+  @@map("return_items")
+}
+
+// =============================================================================
+// REFUND  (Phase 09B — Business Aggregate)
+// =============================================================================
+// Design Principles:
+// - Refund is the business entity: justification, approval, actor accountability.
+// - refundNumber: human-readable RF-YYYYMM-XXXXXXXX, PostgreSQL UNIQUE is authoritative.
+// - paymentAttemptId: mandatory link to the CAPTURED payment being refunded.
+// - Row-level lock on PaymentAttempt prevents concurrent over-refund.
+// - idempotencyKey: client-supplied deduplication key (unique per order).
+// - All monetary fields in integer paise. No floating point.
+// =============================================================================
+
+model Refund {
+  id               String       @id @default(uuid())
+
+  // Human-readable reference. Format: RF-YYYYMM-XXXXXXXX (8 uppercase hex chars).
+  refundNumber     String       @unique
+
+  orderId          String
+  paymentAttemptId String       // FK to CAPTURED PaymentAttempt being refunded
+  userId           String       // Order owner (customer)
+  returnId         String?      // Optional: future Return entity link (Phase 10+)
+
+  source           RefundSource @default(MANUAL)
+  type             RefundType   // FULL | PARTIAL
+  status           RefundStatus @default(REQUESTED)
+
+  // Monetary fields — all integer paise
+  amount           Int          // Requested refund amount (> 0, <= PaymentAttempt.amount)
+  approvedAmount   Int?         // Approved amount (null until approved)
+  refundedAmount   Int          @default(0) // Settled amount confirmed by gateway
+  currency         String       @default("INR")
+
+  reason           String       // Mandatory business justification
+  notes            String?      // Administrative operational notes
+
+  // Actor tracking
+  requestedById    String       // Admin who created the refund request
+  approvedById     String?      // Admin who approved (null until approved)
+  approvedAt       DateTime?
+  rejectedById     String?      // Admin who rejected (null unless rejected)
+  rejectedAt       DateTime?
+  rejectionReason  String?
+
+  // Client-side idempotency: prevents double-submission
+  idempotencyKey   String?      @unique
+
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  // Relations
+  order            Order          @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  paymentAttempt   PaymentAttempt @relation(fields: [paymentAttemptId], references: [id], onDelete: Restrict)
+  user             User           @relation("UserRefunds", fields: [userId], references: [id], onDelete: Restrict)
+  requestedBy      User           @relation("RefundsRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+  approvedBy       User?          @relation("RefundsApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  rejectedBy       User?          @relation("RefundsRejectedBy", fields: [rejectedById], references: [id], onDelete: SetNull)
+  return           Return?        @relation(fields: [returnId], references: [id], onDelete: SetNull)
+  attempts         RefundAttempt[]
+
+  @@index([orderId])
+  @@index([paymentAttemptId])
+  @@index([userId])
+  @@index([status])
+  @@index([source])
+  @@index([createdAt])
+  @@map("refunds")
+}
+
+// =============================================================================
+// REFUND ATTEMPT  (Phase 09B — Gateway Execution Record)
+// =============================================================================
+// Design Principles:
+// - One row per external gateway call — granular traceability for retries.
+// - idempotencyKey: sent to gateway as receipt; prevents double-charging on retry.
+// - providerRefundId: set by gateway on success (e.g. "rfnd_XXXXXX").
+// - rawResponse: full sanitized gateway payload for audit and debugging.
+// - reconciledAt/By: set when RECONCILIATION_REQUIRED is resolved.
+// =============================================================================
+
+model RefundAttempt {
+  id               String              @id @default(uuid())
+  refundId         String
+  paymentAttemptId String
+  attemptNumber    Int                 @default(1)
+
+  // Gateway idempotency — passed to provider as receipt
+  idempotencyKey   String              @unique
+  provider         String              // e.g. "RAZORPAY", "MOCK"
+  providerRefundId String?             // e.g. "rfnd_XXXXXXXXXXXXXX" (set after gateway call)
+
+  amount           Int                 // Exact paise amount sent to provider
+  currency         String              @default("INR")
+  status           RefundAttemptStatus @default(INITIATED)
+
+  gatewayErrorCode    String?
+  gatewayErrorMessage String?
+  rawResponse         Json?
+
+  reconciledAt     DateTime?           // Set when RECONCILIATION_REQUIRED is resolved
+  reconciledBy     String?             // Admin ID or "SYSTEM_CRON"
+
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  // Relations
+  refund           Refund         @relation(fields: [refundId], references: [id], onDelete: Restrict)
+  paymentAttempt   PaymentAttempt @relation(fields: [paymentAttemptId], references: [id], onDelete: Restrict)
+
+  @@unique([provider, providerRefundId])
+  @@index([refundId])
+  @@index([paymentAttemptId])
+  @@index([status])
+  @@index([providerRefundId])
+  @@index([createdAt])
+  @@map("refund_attempts")
+}
+
+// =============================================================================
+// AUDIT LOG
+// =============================================================================
+// IMPORTANT: This table is APPEND-ONLY. Never update or delete audit records.
+// Use database-level permissions to enforce this in production.
+// =============================================================================
+
+model AuditLog {
+  id        String @id @default(uuid())
+
+  // Actor
+  actorId    String
+  actorRole  String
+  actorEmail String?
+
+  // Action
+  action     String // AuditAction enum value as string
+
+  // Entity
+  entityType String // AuditEntityType enum value as string
+  entityId   String
+
+  // Context
+  orderId String?
+  userId  String? // Affected user (may differ from actor)
+
+  // Financial
+  amount   Int?
+  currency String?
+
+  // State transition
+  previousValue String? // JSON string
+  newValue      String? // JSON string
+
+  // Metadata
+  reason        String?
+  correlationId String?
+  metadata      Json?
+
+  createdAt DateTime @default(now()) // Set by database — NOT updatable
+
+  // Relations
+  actor        User   @relation("AuditActor", fields: [actorId], references: [id])
+  order        Order? @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  affectedUser User?  @relation("AuditAffectedUser", fields: [userId], references: [id])
+
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@index([orderId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// =============================================================================
+// FEATURE REGISTRY
+// =============================================================================
+
+model Feature {
+  id             String        @id @default(uuid())
+  key            String        @unique // e.g. "ORDERS"
+  name           String
+  description    String?
+  status         FeatureStatus @default(ACTIVE)
+  category       String        @default("COMMERCE")
+  defaultEnabled Boolean       @default(true)
+  dependencies   String[]      @default([]) // Keys of features this feature depends on
+  path           String?
+  showInNav      Boolean       @default(true)
+  navOrder       Int           @default(0)
+  icon           String?
+  metadata       Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  permissions Permission[]
+
+  @@index([status])
+  @@index([category])
+  @@map("features")
+}
+
+// =============================================================================
+// PERMISSION MODEL
+// =============================================================================
+
+model Permission {
+  id                  String   @id @default(uuid())
+  key                 String   @unique // e.g. "ORDERS.VIEW"
+  resource            String   // e.g. "ORDERS"
+  action              String   // e.g. "VIEW"
+  description         String?
+  featureKey          String?
+  isAssignableToAdmin Boolean  @default(true) // Super Admin boundary: whether this can be delegated to Admins
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  feature         Feature?         @relation(fields: [featureKey], references: [key])
+  rolePermissions RolePermission[]
+  userPermissions UserPermission[]
+
+  @@index([resource])
+  @@index([featureKey])
+  @@map("permissions")
+}
+
+// =============================================================================
+// ROLES & ASSIGNMENTS
+// =============================================================================
+
+model Role {
+  id          String   @id @default(uuid())
+  name        UserRole @unique
+  description String?
+  isSystem    Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  rolePermissions RolePermission[]
+
+  @@map("roles")
+}
+
+model RolePermission {
+  id            String           @id @default(uuid())
+  roleName      UserRole
+  permissionKey String
+  effect        PermissionEffect @default(ALLOW)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  role       Role       @relation(fields: [roleName], references: [name], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionKey], references: [key], onDelete: Cascade)
+
+  @@unique([roleName, permissionKey])
+  @@index([roleName])
+  @@index([permissionKey])
+  @@map("role_permissions")
+}
+
+model UserPermission {
+  id            String           @id @default(uuid())
+  userId        String
+  permissionKey String
+  effect        PermissionEffect @default(ALLOW)
+  grantedById   String?          // User ID who granted/denied this
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionKey], references: [key], onDelete: Cascade)
+
+  @@unique([userId, permissionKey])
+  @@index([userId])
+  @@index([permissionKey])
+  @@map("user_permissions")
+}
+
+// =============================================================================
+// REFRESH TOKEN (Server-side tracking, rotation, replay protection)
+// =============================================================================
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@map("refresh_tokens")
+}
+
+// =============================================================================
+// INVENTORY & STOCK INTEGRITY (Phase 11)
+// =============================================================================
+// Design Principles:
+// - Authoritative stock model: only onHand, reserved, committed are stored.
+// - Available is strictly derived: available = onHand - reserved - committed.
+// - PostgreSQL CHECK constraints enforce physical non-negativity and balance.
+// - All inventory history foreign keys strictly use RESTRICT.
+// - InventoryMovement provides an append-only, immutable double-entry ledger.
+// =============================================================================
+
+model InventoryItem {
+  id                String   @id @default(uuid())
+  variantId         String   @unique
+  onHand            Int      @default(0) // Physical units on facility premises
+  reserved          Int      @default(0) // Temporarily locked in active checkouts
+  committed         Int      @default(0) // Paid orders (CONFIRMED) awaiting shipment
+  lowStockThreshold Int      @default(5)
+  version           Int      @default(1)
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations (RESTRICT protects historical inventory and prevents accidental deletion)
+  variant           ProductVariant        @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  reservations      InventoryReservation[]
+  movements         InventoryMovement[]
+
+  @@index([variantId])
+  @@map("inventory_items")
+}
+
+model InventoryReservation {
+  id                String            @id @default(uuid())
+  inventoryItemId   String
+  variantId         String
+  checkoutSessionId String
+  orderId           String?
+  quantity          Int               // Reserved quantity (> 0, enforced by CHECK)
+  status            ReservationStatus @default(PENDING)
+  expiresAt         DateTime          // Aligned with CheckoutSession.expiresAt
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  // Relations (RESTRICT protects historical reservations)
+  inventoryItem     InventoryItem     @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+  variant           ProductVariant    @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  checkoutSession   CheckoutSession   @relation(fields: [checkoutSessionId], references: [id], onDelete: Restrict)
+  order             Order?            @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@unique([checkoutSessionId, variantId])
+  @@index([checkoutSessionId])
+  @@index([variantId])
+  @@index([status, expiresAt])
+  @@map("inventory_reservations")
+}
+
+model InventoryMovement {
+  id                String                @id @default(uuid())
+  idempotencyKey    String                @unique // Deterministic deduplication key
+  inventoryItemId   String
+  variantId         String
+  type              InventoryMovementType
+  quantityDelta     Int                   // Net change to onHand, reserved, or committed
+
+  // Snapshots immediately after mutation
+  onHandAfter       Int
+  reservedAfter     Int
+  committedAfter    Int
+
+  // Contextual references
+  referenceType     String                // 'CHECKOUT_SESSION' | 'ORDER' | 'RETURN' | 'ADMIN'
+  referenceId       String
+  actorId           String
+  reason            String
+  metadata          Json?
+
+  createdAt         DateTime              @default(now())
+
+  // Relations (RESTRICT protects movement history)
+  inventoryItem     InventoryItem         @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+  variant           ProductVariant        @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  @@index([inventoryItemId])
+  @@index([variantId])
+  @@index([type])
+  @@index([referenceType, referenceId])
+  @@index([createdAt])
+  @@map("inventory_movements")
+}
+
+// =============================================================================
+// INVOICE & BILLING  (Phase 12 — Billing & Invoice Foundation)
+// =============================================================================
+// Design Principles:
+// - Historical financial document: immutable snapshot of order, seller, and items.
+// - Generated only after successful order finalization (one-to-one with Order).
+// - invoiceNumber is human-readable, unique, and concurrency-safe (VN-INV-YYYYMM-XXXXXXXX).
+// - Monetary fields are stored in integer paise (matching Order/PaymentAttempt).
+// - Future GST extension points included without forcing GST compliance currently.
+// - Foreign keys on Order, User, and InvoiceItem enforce RESTRICT to protect financial records.
+// =============================================================================
+
+model Invoice {
+  id                 String        @id @default(uuid())
+
+  // Human-readable reference. Format: VN-INV-YYYYMM-XXXXXXXX (8 uppercase hex chars).
+  invoiceNumber      String        @unique
+
+  orderId            String        @unique
+  userId             String
+  status             InvoiceStatus @default(ISSUED)
+  currency           String        @default("INR")
+
+  // Monetary snapshot — all integer paise, validated before write
+  subtotal           Int           // Sum of items line totals (paise)
+  discountTotal      Int           @default(0) // Order discount applied (paise)
+  shippingTotal      Int           @default(0) // Shipping charges (paise)
+  taxTotal           Int           @default(0) // Tax amount (paise)
+  grandTotal         Int           // Must equal subtotal - discountTotal + shippingTotal + taxTotal
+
+  // Immutable customer billing address snapshot
+  billingName        String?
+  billingPhone       String?
+  billingLine1       String?
+  billingLine2       String?
+  billingCity        String?
+  billingState       String?
+  billingPostalCode  String?
+  billingCountry     String?
+  billingSnapshot    Json?
+
+  // Immutable seller business snapshot
+  sellerName         String        @default("Vishkaraa Naturals Private Limited")
+  sellerAddressLine1 String?
+  sellerAddressLine2 String?
+  sellerCity         String?
+  sellerState        String?
+  sellerPostalCode   String?
+  sellerCountry      String        @default("IN")
+  sellerEmail        String?
+  sellerPhone        String?
+  sellerGstin        String?
+  sellerSnapshot     Json?
+
+  // Future GST extension points
+  customerGstin      String?
+  placeOfSupply      String?
+  taxJurisdiction    String?
+  isReverseCharge    Boolean       @default(false)
+  invoiceType        String        @default("REGULAR")
+
+  // Timestamps
+  issuedAt           DateTime      @default(now())
+  cancelledAt        DateTime?
+  cancelReason       String?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  // Relations (RESTRICT protects financial history)
+  order              Order         @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  user               User          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  items              InvoiceItem[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([issuedAt])
+  @@index([createdAt])
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id             String   @id @default(uuid())
+  invoiceId      String
+
+  // Soft references for catalog traceability
+  orderItemId    String?
+  productId      String?
+  variantId      String?
+
+  // Immutable snapshot fields
+  productName    String
+  variantName    String?
+  productSku     String
+  quantity       Int      // Must be > 0 (enforced by CHECK)
+  unitPrice      Int      // Paise (>= 0)
+  discountAmount Int      @default(0) // Paise (>= 0)
+  taxableAmount  Int      // Paise (>= 0)
+  taxAmount      Int      @default(0) // Paise (>= 0)
+  lineTotal      Int      // Paise (Must equal taxableAmount + taxAmount)
+  currency       String   @default("INR")
+
+  // Future GST extension points
+  hsnSac         String?
+  taxRate        Int?     // In basis points (e.g., 1800 for 18%) or integer percentage
+  cgstAmount     Int?
+  sgstAmount     Int?
+  igstAmount     Int?
+  cessAmount     Int?
+
+  createdAt      DateTime @default(now())
+
+  // Relations (RESTRICT protects line items from being orphaned or cascade-deleted)
+  invoice        Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+
+  @@index([invoiceId])
+  @@index([productSku])
+  @@map("invoice_items")
+}
+
+// =============================================================================
+// SHIPPING & FULFILLMENT (Phase 13)
+// =============================================================================
+
+model Shipment {
+  id                 String         @id @default(uuid())
+  shipmentNumber     String         @unique // Format: SHP-YYYYMM-XXXXXXXX
+  orderId            String
+  userId             String         // Denormalized customer reference
+
+  status             ShipmentStatus @default(CREATED)
+  previousStatus     ShipmentStatus?
+
+  carrierCode        String         // "SHIPROCKET" | "DELHIVERY" | "BLUEDART" | "MANUAL"
+  carrierName        String
+  serviceType        String?        // "EXPRESS" | "STANDARD" | "SURFACE"
+  trackingNumber     String?        // AWB / Consignment Number
+  providerShipmentId String?        // Provider reference ID
+
+  // Logistics Dimensions
+  weightGrams        Int            @default(0)
+  lengthCm           Int?
+  widthCm            Int?
+  heightCm           Int?
+  isCod              Boolean        @default(false)
+  codAmountPaise     Int            @default(0)
+
+  // Label & Documentation
+  labelUrl           String?
+  manifestUrl        String?
+  invoiceId          String?        // Link to authoritative Phase 12 invoice
+
+  // Lifecycle Timestamps
+  packedAt           DateTime?
+  shippedAt          DateTime?
+  outForDeliveryAt   DateTime?
+  deliveredAt        DateTime?
+  cancelledAt        DateTime?
+  cancelReason       String?
+  lastEventTimestamp DateTime?
+
+  // Concurrency & Reconciliation
+  version            Int            @default(1)
+  reconciliationRequired Boolean   @default(false)
+  reconciliationNotes    String?
+
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  // Relations (RESTRICT protects historical orders and users)
+  order              Order          @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  user               User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  items              ShipmentItem[]
+  events             ShipmentEvent[]
+
+  @@unique([carrierCode, trackingNumber])
+  @@index([orderId])
+  @@index([userId])
+  @@index([status])
+  @@index([trackingNumber])
+  @@index([createdAt])
+  @@map("shipments")
+}
+
+model ShipmentItem {
+  id            String   @id @default(uuid())
+  shipmentId    String
+  orderItemId   String
+  variantId     String
+
+  // Authoritative snapshot details from OrderItem
+  productName   String
+  variantName   String?
+  productSku    String
+  quantity      Int      // Quantity in this package (> 0, enforced by CHECK)
+
+  createdAt     DateTime @default(now())
+
+  // Relations (Cascade on shipment deletion, Restrict on referenced items)
+  shipment      Shipment       @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  orderItem     OrderItem      @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  variant       ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  @@unique([shipmentId, orderItemId])
+  @@index([shipmentId])
+  @@index([orderItemId])
+  @@index([variantId])
+  @@map("shipment_items")
+}
+
+model ShipmentEvent {
+  id               String         @id @default(uuid())
+  shipmentId       String
+  status           ShipmentStatus
+  statusCode       String?        // Provider raw status string
+  description      String
+  location         String?
+  eventTimestamp   DateTime
+  providerEventId  String?
+  isStale          Boolean        @default(false)
+  rawPayload       Json?
+
+  createdAt        DateTime       @default(now())
+
+  shipment         Shipment       @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@index([shipmentId])
+  @@index([eventTimestamp])
+  @@map("shipment_events")
+}
+
+model ShipmentWebhookEvent {
+  id               String    @id @default(uuid())
+  provider         String    // "SHIPROCKET" | "DELHIVERY"
+  eventId          String
+  eventType        String
+  trackingNumber   String?
+  rawPayload       Json
+  processedAt      DateTime?
+  processingError  String?
+  createdAt        DateTime  @default(now())
+
+  @@unique([provider, eventId])
+  @@index([provider])
+  @@index([trackingNumber])
+  @@index([createdAt])
+  @@map("shipment_webhook_events")
+}
+
+// =============================================================================
+// NOTIFICATIONS SUBSYSTEM (Phase 14)
+// =============================================================================
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+  WHATSAPP
+  PUSH
+}
+
+enum NotificationCategory {
+  TRANSACTIONAL
+  OPERATIONAL
+  MARKETING
+}
+
+enum DeliveryStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+model Notification {
+  id          String               @id @default(uuid())
+  userId      String?              // Nullable for system-wide operational alerts
+  category    NotificationCategory @default(TRANSACTIONAL)
+  type        String               // NotificationEventType string, e.g. "ORDER_CONFIRMED"
+  title       String
+  body        String
+  actionUrl   String?
+  metadata    Json?
+  isRead      Boolean              @default(false)
+  readAt      DateTime?
+  expiresAt   DateTime?
+
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  user        User?                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries  NotificationDelivery[]
+
+  @@index([userId, isRead, createdAt])
+  @@index([category])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+model NotificationDelivery {
+  id                String              @id @default(uuid())
+  notificationId    String
+  channel           NotificationChannel
+  recipient         String              // Email address or E.164 phone
+  status            DeliveryStatus      @default(PENDING)
+  attemptCount      Int                 @default(0)
+  lastAttemptAt     DateTime?
+  nextRetryAt       DateTime?
+  claimedAt         DateTime?           // Timestamp when worker locked the row
+  providerName      String?
+  providerMessageId String?
+  failureReason     String?
+  isRetryable       Boolean             @default(false)
+  idempotencyKey    String              @unique // notif:{entity}:{id}:{action}:{channel}
+
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  notification      Notification        @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextRetryAt])
+  @@index([status, claimedAt])
+  @@index([notificationId])
+  @@index([channel])
+  @@map("notification_deliveries")
+}
+
+model NotificationPreference {
+  id          String               @id @default(uuid())
+  userId      String
+  category    NotificationCategory
+  channel     NotificationChannel
+  isEnabled   Boolean              @default(true)
+  isLocked    Boolean              @default(false)
+
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  user        User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, category, channel])
+  @@index([userId])
+  @@map("notification_preferences")
+}
+
+// =============================================================================
+// FINANCE LEDGER FOUNDATION (Phase 15A — Double-Entry Accounting Primitives)
+// =============================================================================
+//
+// Design Principles:
+// - Double-entry: every POSTED transaction satisfies SUM(debit) == SUM(credit).
+// - All monetary values in integer paise (INR). No floating point.
+// - Immutable after POSTED: amounts, accounts, currency, idempotencyKey are frozen.
+// - Corrections are compensating transactions, never mutations.
+// - sourceType + sourceId: polymorphic domain reference (no PG FK, same pattern as InventoryMovement).
+// - idempotencyKey: unique per business event; P2002 returns existing record safely.
+// - Admin-only: USER role has no access; permission keys FINANCE.VIEW / FINANCE.POST / FINANCE.MANAGE.
+// - Audit: every mutation logged via AuditService.
+// =============================================================================
+
+enum FinancialAccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+enum FinancialAccountNormalBalance {
+  DEBIT
+  CREDIT
+}
+
+enum FinancialTransactionType {
+  SALE
+  PAYMENT
+  REFUND
+  EXPENSE
+  ADJUSTMENT
+  CREDIT_NOTE
+  VOID
+}
+
+enum FinancialTransactionStatus {
+  DRAFT
+  POSTED
+  VOIDED
+}
+
+// =============================================================================
+// FINANCIAL ACCOUNT
+// =============================================================================
+// Design Principles:
+// - code is unique: stable external reference (e.g. "1000", "3000-SALES").
+// - isSystemAccount=true accounts cannot be renamed or deactivated externally.
+// - isActive: prefer deactivation over deletion.
+// - Deletion blocked by RESTRICT FK from financial_transaction_lines.
+// =============================================================================
+
+model FinancialAccount {
+  id             String                       @id @default(uuid())
+  code           String                       @unique
+  name           String
+  type           FinancialAccountType
+  normalBalance  FinancialAccountNormalBalance
+  description    String?
+  isSystemAccount Boolean                     @default(false)
+  isActive       Boolean                      @default(true)
+
+  createdAt      DateTime                     @default(now())
+  updatedAt      DateTime                     @updatedAt
+
+  // Relations
+  lines          FinancialTransactionLine[]
+  expenses       Expense[]
+
+  @@index([code])
+  @@index([type])
+  @@index([isActive])
+  @@map("financial_accounts")
+}
+
+// =============================================================================
+// FINANCIAL TRANSACTION
+// =============================================================================
+// Design Principles:
+// - Represents ONE immutable posted accounting event.
+// - sourceType + sourceId: polymorphic domain reference without PG FK constraints.
+// - idempotencyKey: UNIQUE — database is authoritative deduplication guard.
+// - POSTED status freezes all fields; only VOID transition allowed after POSTED.
+// - Corrections = new compensating transaction, never mutation of existing.
+// - createdById / voidedById: admin actor references (no FK to User, avoids coupling).
+// =============================================================================
+
+model FinancialTransaction {
+  id               String                     @id @default(uuid())
+  transactionType  FinancialTransactionType
+  status           FinancialTransactionStatus @default(DRAFT)
+  currency         String                     @default("INR")
+
+  // Polymorphic domain reference (no PG FK — same pattern as InventoryMovement.referenceType/referenceId)
+  sourceType       String?                    // 'ORDER' | 'PAYMENT' | 'REFUND' | 'INVOICE' | 'EXPENSE' | 'ADJUSTMENT'
+  sourceId         String?                    // UUID of originating domain record
+
+  description      String
+  idempotencyKey   String                     @unique
+
+  // Lifecycle timestamps
+  postedAt         DateTime?                  // Set when status → POSTED
+  voidedAt         DateTime?
+  voidReason       String?
+  voidedById       String?                    // Admin actor UUID (soft reference)
+
+  createdById      String                     // Admin actor UUID (soft reference)
+
+  createdAt        DateTime                   @default(now())
+  updatedAt        DateTime                   @updatedAt
+
+  // Relations
+  lines            FinancialTransactionLine[]
+
+  @@index([transactionType])
+  @@index([status])
+  @@index([sourceType, sourceId])
+  @@index([idempotencyKey])
+  @@index([postedAt])
+  @@index([createdAt])
+  @@map("financial_transactions")
+}
+
+// =============================================================================
+// FINANCIAL TRANSACTION LINE
+// =============================================================================
+// Design Principles:
+// - Each POSTED transaction contains >= 2 lines.
+// - SUM(debitPaise) == SUM(creditPaise) enforced transactionally by service.
+// - DB CHECK constraints enforce per-line invariants:
+//     debitPaise >= 0
+//     creditPaise >= 0
+//     NOT (debitPaise > 0 AND creditPaise > 0)  -- cannot have both
+//     (debitPaise > 0 OR creditPaise > 0)         -- cannot have both zero
+// - accountId uses RESTRICT: cannot delete account with referenced lines.
+// - transactionId uses RESTRICT: financial history is permanent.
+// - No updatedAt: lines are immutable after POSTED transaction creation.
+// =============================================================================
+
+model FinancialTransactionLine {
+  id            String               @id @default(uuid())
+  transactionId String
+  accountId     String
+
+  debitPaise    Int                  @default(0)
+  creditPaise   Int                  @default(0)
+  description   String?
+
+  createdAt     DateTime             @default(now())
+  // No updatedAt — lines are immutable
+
+  // Relations
+  transaction   FinancialTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  account       FinancialAccount     @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@index([transactionId])
+  @@index([accountId])
+  @@map("financial_transaction_lines")
+}
+
+// =============================================================================
+// EXPENSES DOMAIN (Phase 15C — Expense Lifecycle & Financial Integration)
+// =============================================================================
+
+enum ExpenseStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  POSTED
+  REJECTED
+  CANCELLED
+}
+
+enum ExpensePaymentMethod {
+  CASH
+  BANK_TRANSFER
+  UPI
+  CARD
+  NET_BANKING
+  CHEQUE
+  OTHER
+}
+
+model Expense {
+  id                    String                @id @default(uuid())
+  expenseNumber         String                @unique // EXP-YYYYMM-XXXXXXXX
+  status                ExpenseStatus         @default(DRAFT)
+  category              String                // Business category (e.g. UTILITIES, OFFICE_SUPPLIES, PACKAGING, LOGISTICS)
+  vendor                String                // Vendor / Payee name
+  description           String
+  amountPaise           Int                   // Positive integer paise
+  currency              String                @default("INR")
+  expenseDate           DateTime              // Incurred date
+  expenseAccountId      String?               // Optional specific FinancialAccount (defaults to 5000 OPERATING_EXPENSES)
+  isPaid                Boolean               @default(true) // true -> credits CASH_AND_BANK (1000); false -> credits ACCOUNTS_PAYABLE (2000)
+  paymentMethod         ExpensePaymentMethod?
+  paymentReference      String?               // UTR, Cheque number, Transaction ID
+  paymentDate           DateTime?
+  receiptUrl            String?               // Primary receipt or invoice document link
+  notes                 String?
+
+  // Lifecycle actors & timestamps (soft references to User actor UUIDs)
+  submittedById         String?
+  submittedAt           DateTime?
+  approvedById          String?
+  approvedAt            DateTime?
+  rejectedById          String?
+  rejectedAt            DateTime?
+  rejectionReason       String?
+  cancelledById         String?
+  cancelledAt           DateTime?
+  cancellationReason    String?
+  postedById            String?
+  postedAt              DateTime?
+  
+  // Ledger linkage
+  financeTransactionId  String?               @unique // Unique linkage to financial_transactions.id
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  // Relations
+  expenseAccount        FinancialAccount?     @relation(fields: [expenseAccountId], references: [id], onDelete: SetNull)
+  attachments           ExpenseAttachment[]
+
+  @@index([expenseNumber])
+  @@index([status])
+  @@index([category])
+  @@index([vendor])
+  @@index([expenseDate])
+  @@index([submittedById])
+  @@index([financeTransactionId])
+  @@index([createdAt])
+  @@map("expenses")
+}
+
+model ExpenseAttachment {
+  id           String   @id @default(uuid())
+  expenseId    String
+  fileName     String
+  fileUrl      String
+  fileSize     Int?
+  mimeType     String?
+  uploadedById String
+  createdAt    DateTime @default(now())
+
+  expense      Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+
+  @@index([expenseId])
+  @@map("expense_attachments")
+}
+
+// =============================================================================
+// PHASE 20D.5: WISHLIST & SYSTEM SETTINGS
+// =============================================================================
+
+model WishlistItem {
+  id        String   @id @default(uuid())
+  userId    String
+  productId String
+  variantId String?
+  createdAt DateTime @default(now())
+
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, productId, variantId])
+  @@index([userId])
+  @@index([productId])
+  @@map("wishlist_items")
+}
+
+model SystemSetting {
+  key         String   @id
+  value       Json
+  description String?
+  updatedBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("system_settings")
+}
+
+// =============================================================================
+// PHASE 20D.9: MULTI-COURIER MANAGEMENT & LOGISTICS ENGINE
+// =============================================================================
+
+model CourierPartner {
+  id             String     @id @default(uuid())
+  name           String     // e.g., "Delhivery Express", "Shiprocket", "BlueDart", "Xpressbees", "V-Trans Surface"
+  code           String     @unique // "DELHIVERY" | "SHIPROCKET" | "BLUEDART" | "XPRESSBEES" | "HEAVY_SURFACE" | "INDIA_POST"
+  isActive       Boolean    @default(true)
+  priority       Int        @default(1)
+  isSurfaceHeavy Boolean    @default(false) // true for bulk/B2B freight partners (>= 5 kg)
+  apiCredentials Json?      // Encrypted or configuration JSON
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  rateCards      RateCard[]
+
+  @@index([code])
+  @@index([isActive])
+  @@map("courier_partners")
+}
+
+model PincodeZone {
+  pincode       String   @id // 6-digit Indian PIN code
+  district      String
+  state         String
+  zoneType      String   @default("TIER2") // "METRO" | "TIER2" | "SPECIAL" | "REMOTE"
+  isServiceable Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([state])
+  @@index([district])
+  @@map("pincode_zones")
+}
+
+model RateCard {
+  id                  String         @id @default(uuid())
+  courierId           String
+  minWeightKg         Float          @default(0.0)
+  maxWeightKg         Float          @default(5.0)
+  baseRate            Float          // In INR
+  perKgRate           Float          // In INR
+  expectedTransitDays Int            @default(3)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  courier             CourierPartner @relation(fields: [courierId], references: [id], onDelete: Cascade)
+
+  @@index([courierId])
+  @@map("rate_cards")
+}
+
+model BlacklistedPincode {
+  pincode   String   @id // 6-digit PIN code
+  reason    String   // Reason for blacklisting (e.g. high RTO risk, non-serviceable conflict zone)
+  createdAt DateTime @default(now())
+
+  @@map("blacklisted_pincodes")
+}
+
+// =============================================================================
+// FUTURE: CUSTOMER / ORGANIZATION LAYER
+// =============================================================================
+//
+// The following models will be added in the Customer/Organization phase.
+// They are NOT active now and must NOT be depended upon by current code.
+//
+// model Customer {
+//   id        String @id @default(uuid())
+//   name      String
+//   email     String @unique
+//   status    String @default("ACTIVE")
+//   createdAt DateTime @default(now())
+//   updatedAt DateTime @updatedAt
+//   users     CustomerUser[]
+//   config    CustomerConfig?
+//   @@map("customers")
+// }
+//
+// model CustomerUser {
+//   id         String @id @default(uuid())
+//   customerId String
+//   userId     String
+//   role       String @default("MEMBER")
+//   createdAt  DateTime @default(now())
+//   customer   Customer @relation(fields: [customerId], references: [id])
+//   @@unique([customerId, userId])
+//   @@map("customer_users")
+// }
+//
+// model CustomerConfig {
+//   id         String @id @default(uuid())
+//   customerId String @unique
+//   config     Json
+//   customer   Customer @relation(fields: [customerId], references: [id])
+//   @@map("customer_configs")
+// }
+// =============================================================================
