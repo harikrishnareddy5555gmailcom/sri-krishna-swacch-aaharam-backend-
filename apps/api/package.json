@@ -10,7 +10,7 @@
     "build": "nest build",
     "dev": "nest start --watch",
     "start": "nest start",
-    "start:prod": "node dist/main",
+    "start:prod": "node --no-warnings dist/main",
     "lint": "eslint src --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -23,9 +23,6 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
     "clean": "rimraf dist"
-  },
-  "prisma": {
-    "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1144.0",

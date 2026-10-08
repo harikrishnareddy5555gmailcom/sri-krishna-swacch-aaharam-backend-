@@ -25,9 +25,17 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter.js';
 import { validateEnvironment } from './common/config/validate-env.js';
 
 // Pre-load environment files from both local directory and monorepo root
-dotenv.config({ path: resolve(process.cwd(), '../../.env') });
-dotenv.config({ path: resolve(process.cwd(), '.env') });
+// Suppress benign Node version support warning from AWS SDK v3 in production container
+process.on('warning', (warning) => {
+  if (warning.name === 'NodeVersionSupportWarning') return;
+  console.warn('[' + warning.name + '] ' + warning.message);
+});
 
+// Pre-load local environment files in development/test
+if (process.env['NODE_ENV'] !== 'production') {
+  dotenv.config({ path: resolve(process.cwd(), '../../.env'), quiet: true });
+  dotenv.config({ path: resolve(process.cwd(), '.env'), quiet: true });
+}
 async function bootstrap(): Promise<void> {
   // Validate configuration fail-fast before spinning up modules or listeners
   validateEnvironment();
@@ -170,4 +178,5 @@ async function bootstrap(): Promise<void> {
 }
 
 await bootstrap();
+
 
