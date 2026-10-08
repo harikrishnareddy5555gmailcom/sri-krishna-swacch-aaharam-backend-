@@ -583,5 +583,22 @@ describe('Phase 16A: Financial Reporting & Statements Foundation', () => {
       expect(res).toBeDefined();
       expect(res.isBalanced).toBe(true);
     });
+
+    it('7.6 exposes getExecutiveSummaryReport via controller and service with authoritative metrics', async () => {
+      const report = await controller.getExecutiveSummaryReport({});
+      expect(report).toBeDefined();
+      expect(report.metrics).toBeDefined();
+      expect(typeof report.metrics.grossOrderVolumePaise).toBe('number');
+      expect(typeof report.metrics.totalDeductionsPaise).toBe('number');
+      expect(typeof report.metrics.netRealizedRevenuePaise).toBe('number');
+      expect(typeof report.metrics.totalExpensesPaise).toBe('number');
+      expect(typeof report.metrics.netProfitPaise).toBe('number');
+      expect(typeof report.metrics.cashInBankPaise).toBe('number');
+      expect(typeof report.metrics.accountsPayablePaise).toBe('number');
+      expect(Array.isArray(report.expenseBreakdown)).toBe(true);
+      expect(Array.isArray(report.waterfallSteps)).toBe(true);
+      expect(report.waterfallSteps.length).toBeGreaterThanOrEqual(4);
+      expect(Array.isArray(report.recentReconciliation)).toBe(true);
+    });
   });
 });
