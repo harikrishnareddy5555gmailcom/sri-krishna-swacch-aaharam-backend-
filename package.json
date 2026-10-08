@@ -5,11 +5,10 @@
   "description": "Sri Krishna Swacch Aaharam — NestJS Backend API & Database Service",
   "type": "module",
   "scripts": {
-    "postinstall": "pnpm --filter @vishkaraa/api run db:generate",
     "dev": "pnpm --filter @vishkaraa/api run dev",
     "start": "pnpm --filter @vishkaraa/api run start",
     "start:prod": "pnpm --filter @vishkaraa/api run start:prod",
-    "build": "pnpm --filter @vishkaraa/types run build && pnpm --filter @vishkaraa/shared run build && pnpm --filter @vishkaraa/config run build && pnpm --filter @vishkaraa/api run build",
+    "build": "pnpm --filter @vishkaraa/types run build && pnpm --filter @vishkaraa/shared run build && pnpm --filter @vishkaraa/config run build && pnpm --filter @vishkaraa/api run db:generate && pnpm --filter @vishkaraa/api run build",
     "test": "pnpm --filter @vishkaraa/api run test",
     "test:e2e": "pnpm --filter @vishkaraa/api run test:e2e",
     "db:generate": "pnpm --filter @vishkaraa/api run db:generate",
