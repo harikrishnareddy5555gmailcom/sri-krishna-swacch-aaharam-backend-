@@ -170,8 +170,8 @@ async function bootstrap(): Promise<void> {
   }
 
   // ─── Start Server ────────────────────────────────────────────────────────────
-  const port = parseInt(process.env['API_PORT'] ?? '3001', 10);
-  await app.listen(port);
+  const port = parseInt(process.env['PORT'] ?? process.env['API_PORT'] ?? '3001', 10);
+  await app.listen(port, '0.0.0.0');
 
   console.log(`\n✅ Vishkaraa API running on: http://localhost:${port}/api/v1`);
   if (process.env['NODE_ENV'] !== 'production') {
