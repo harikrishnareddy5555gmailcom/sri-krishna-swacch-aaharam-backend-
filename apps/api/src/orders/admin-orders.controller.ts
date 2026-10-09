@@ -91,6 +91,27 @@ export class AdminOrdersController {
   }
 
   /**
+   * GET /admin/orders/summary
+   * Returns order counts grouped by status + today's revenue.
+   * Used for Admin Dashboard live stat cards.
+   * Requires ORDERS.VIEW permission.
+   */
+  @Get('summary')
+  @RequirePermissions(Permissions.ORDERS_VIEW)
+  @HttpCode(HttpStatus.OK)
+  async getOrderSummary(): Promise<{
+    confirmed: number;
+    processing: number;
+    shipped: number;
+    delivered: number;
+    cancelled: number;
+    todayRevenuePaise: number;
+    totalOrders: number;
+  }> {
+    return this.orderService.getOrderSummary();
+  }
+
+  /**
    * GET /admin/orders/:id
    * Requires ORDERS.VIEW permission.
    * Returns operational payment references and audit trail.
@@ -145,4 +166,35 @@ export class AdminOrdersController {
     const user = extractUser(req);
     return this.orderService.reviewOrderCancellation(orderId, user, body.approved, body.notes);
   }
+
+  /**
+   * PATCH /admin/orders/:id/tracking
+   * Saves courier name and tracking number into order metadata.
+   * Requires ORDERS.UPDATE permission.
+   */
+  @Patch(':id/tracking')
+  @RequirePermissions(Permissions.ORDERS_UPDATE)
+  @HttpCode(HttpStatus.OK)
+  async updateTracking(
+    @Param('id') orderId: string,
+    @Body() body: { courierName?: string; trackingNumber?: string },
+  ): Promise<{ success: boolean }> {
+    return this.orderService.updateOrderTracking(orderId, body);
+  }
+
+  /**
+   * PATCH /admin/orders/:id/notes
+   * Saves internal admin notes (not shown to customer).
+   * Requires ORDERS.UPDATE permission.
+   */
+  @Patch(':id/notes')
+  @RequirePermissions(Permissions.ORDERS_UPDATE)
+  @HttpCode(HttpStatus.OK)
+  async updateAdminNotes(
+    @Param('id') orderId: string,
+    @Body() body: { notes: string },
+  ): Promise<{ success: boolean }> {
+    return this.orderService.updateOrderAdminNotes(orderId, body.notes);
+  }
 }
+

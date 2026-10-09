@@ -112,6 +112,16 @@ describe('Admin Orders & State Machine — Phase 08B', () => {
         findUnique: vi.fn().mockResolvedValue(baseOrder),
         findUniqueOrThrow: vi.fn().mockResolvedValue(baseOrder),
         updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        groupBy: vi.fn().mockResolvedValue([
+          { status: OrderStatus.CONFIRMED, _count: { id: 3 } },
+          { status: OrderStatus.PROCESSING, _count: { id: 7 } },
+          { status: OrderStatus.SHIPPED, _count: { id: 4 } },
+          { status: OrderStatus.DELIVERED, _count: { id: 10 } },
+          { status: OrderStatus.CANCELLED, _count: { id: 1 } },
+        ]),
+        aggregate: vi.fn().mockResolvedValue({
+          _sum: { totalAmount: 2500000 },
+        }),
       },
       auditLog: {
         create: vi.fn().mockResolvedValue({ id: 'audit-uuid-1' }),
@@ -526,6 +536,56 @@ describe('Admin Orders & State Machine — Phase 08B', () => {
         reason: 'Super admin cancel',
       });
       expect(cancelResult).toBeDefined();
+    });
+  });
+
+  describe('GET /admin/orders/summary (Phase 1 Dashboard Command Center)', () => {
+    it('returns order counts breakdown and today revenue paise', async () => {
+      const summary = await orderService.getOrderSummary();
+
+      expect(summary).toEqual({
+        confirmed: 3,
+        processing: 7,
+        shipped: 4,
+        delivered: 10,
+        cancelled: 1,
+        todayRevenuePaise: 2500000,
+        totalOrders: 25,
+      });
+
+      expect(mockPrisma.order.groupBy).toHaveBeenCalledWith({
+        by: ['status'],
+        _count: { id: true },
+      });
+      expect(mockPrisma.order.aggregate).toHaveBeenCalled();
+    });
+
+    it('delegates from controller to service correctly', async () => {
+      const summary = await adminOrdersController.getOrderSummary();
+
+      expect(summary).toHaveProperty('confirmed', 3);
+      expect(summary).toHaveProperty('processing', 7);
+      expect(summary).toHaveProperty('shipped', 4);
+      expect(summary).toHaveProperty('delivered', 10);
+      expect(summary).toHaveProperty('todayRevenuePaise', 2500000);
+      expect(summary).toHaveProperty('totalOrders', 25);
+    });
+
+    it('handles zero revenue and missing statuses safely without NaN or undefined', async () => {
+      mockPrisma.order.groupBy.mockResolvedValueOnce([]);
+      mockPrisma.order.aggregate.mockResolvedValueOnce({ _sum: { totalAmount: null } });
+
+      const summary = await orderService.getOrderSummary();
+
+      expect(summary).toEqual({
+        confirmed: 0,
+        processing: 0,
+        shipped: 0,
+        delivered: 0,
+        cancelled: 0,
+        todayRevenuePaise: 0,
+        totalOrders: 0,
+      });
     });
   });
 });

@@ -1209,4 +1209,137 @@ export class OrderService {
       return mapOrderToDto(finalOrder);
     }
   }
+
+  /**
+   * Returns a status breakdown and today's revenue for the admin dashboard.
+   */
+  async getOrderSummary(): Promise<{
+    confirmed: number;
+    processing: number;
+    shipped: number;
+    delivered: number;
+    cancelled: number;
+    todayRevenuePaise: number;
+    totalOrders: number;
+  }> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const [statusCounts, todayRevenue] = await Promise.all([
+      this.prisma.order.groupBy({
+        by: ['status'],
+        _count: { id: true },
+      }),
+      this.prisma.order.aggregate({
+        _sum: { totalAmount: true },
+        where: {
+          createdAt: { gte: today },
+          status: { in: [OrderStatus.CONFIRMED, OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.DELIVERED] },
+        },
+      }),
+    ]);
+
+    const counts = { confirmed: 0, processing: 0, shipped: 0, delivered: 0, cancelled: 0 };
+    let totalOrders = 0;
+    for (const row of statusCounts) {
+      const c = row._count.id;
+      totalOrders += c;
+      switch (row.status) {
+        case 'CONFIRMED':  counts.confirmed  = c; break;
+        case 'PROCESSING': counts.processing = c; break;
+        case 'SHIPPED':    counts.shipped    = c; break;
+        case 'DELIVERED':  counts.delivered  = c; break;
+        case 'CANCELLED':  counts.cancelled  = c; break;
+      }
+    }
+
+    return {
+      ...counts,
+      todayRevenuePaise: todayRevenue._sum.totalAmount ?? 0,
+      totalOrders,
+    };
+  }
+
+  /**
+   * Updates shipping courier and tracking number in order notes/metadata.
+   */
+  async updateOrderTracking(
+    orderId: string,
+    body: { courierName?: string; trackingNumber?: string },
+  ): Promise<{ success: boolean }> {
+    const order = await this.prisma.order.findUnique({ where: { id: orderId } });
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    const courier = body.courierName?.trim() || '';
+    const tracking = body.trackingNumber?.trim() || '';
+    const trackingTag = `[TRACKING:${courier}#${tracking}]`;
+
+    let currentNotes = order.notes || '';
+    if (currentNotes.includes('[TRACKING:')) {
+      currentNotes = currentNotes.replace(/\[TRACKING:[^\]]*\]/, trackingTag);
+    } else {
+      currentNotes = currentNotes ? `${currentNotes}\n${trackingTag}` : trackingTag;
+    }
+
+    await this.prisma.order.update({
+      where: { id: orderId },
+      data: { notes: currentNotes },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        actorId: order.userId,
+        actorRole: 'ADMIN',
+        action: AuditAction.ORDER_STATUS_CHANGED,
+        entityType: AuditEntityType.ORDER,
+        entityId: orderId,
+        orderId,
+        reason: `Shipping tracking updated: ${courier} - ${tracking}`,
+      },
+    }).catch(() => {});
+
+    return { success: true };
+  }
+
+  /**
+   * Updates internal admin notes for an order without wiping tracking tag.
+   */
+  async updateOrderAdminNotes(
+    orderId: string,
+    notes: string,
+  ): Promise<{ success: boolean }> {
+    const order = await this.prisma.order.findUnique({ where: { id: orderId } });
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    const trackingMatch = order.notes?.match(/\[TRACKING:[^\]]*\]/);
+    const trackingTag = trackingMatch ? trackingMatch[0] : '';
+    const cleanNotes = notes.trim();
+    const finalNotes = trackingTag
+      ? (cleanNotes ? `${cleanNotes}\n${trackingTag}` : trackingTag)
+      : cleanNotes;
+
+    await this.prisma.order.update({
+      where: { id: orderId },
+      data: { notes: finalNotes },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        actorId: order.userId,
+        actorRole: 'ADMIN',
+        action: AuditAction.ORDER_STATUS_CHANGED,
+        entityType: AuditEntityType.ORDER,
+        entityId: orderId,
+        orderId,
+        reason: `Admin internal note updated`,
+      },
+    }).catch(() => {});
+
+    return { success: true };
+  }
 }
+
