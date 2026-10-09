@@ -150,4 +150,45 @@ export class StorageService {
 
     return res;
   }
+
+  extractStorageKey(keyOrUrl: string): string | null {
+    if (!keyOrUrl || typeof keyOrUrl !== 'string') return null;
+    const trimmed = keyOrUrl.trim();
+    if (!trimmed) return null;
+    // Strip domain if full URL passed (e.g. https://pub-xxx.r2.dev/products/123-abc.jpg)
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      const match = trimmed.replace(/^https?:\/\/[^\/]+\//, '');
+      return match ? decodeURIComponent(match) : null;
+    }
+    return trimmed;
+  }
+
+  async deleteFile(keyOrUrl: string, user?: MinimalUser): Promise<void> {
+    const key = this.extractStorageKey(keyOrUrl);
+    if (!key) return;
+
+    if (!this.storageProvider.isConfigured()) {
+      this.logger.warn(`Storage provider not configured, skipping permanent delete of: ${key}`);
+      return;
+    }
+
+    try {
+      await this.storageProvider.deleteFile(key);
+      this.logger.log(`[Storage] Permanently deleted object from R2: ${key}`);
+
+      if (user) {
+        await this.auditService.logEvent({
+          actorId: user.id,
+          actorRole: user.role,
+          actorEmail: user.email,
+          action: AuditAction.MEDIA_REMOVED,
+          entityType: AuditEntityType.PRODUCT,
+          entityId: key,
+          metadata: { storageKey: key },
+        });
+      }
+    } catch (err: unknown) {
+      this.logger.error(`[Storage] Failed to delete object ${key} from R2: ${(err as Error).message}`);
+    }
+  }
 }

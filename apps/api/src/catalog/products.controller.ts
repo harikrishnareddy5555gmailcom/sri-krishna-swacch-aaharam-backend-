@@ -31,7 +31,11 @@ import {
 } from './dto/product.dto.js';
 import { CreateVariantValidationDto, UpdateVariantValidationDto } from './dto/variant.dto.js';
 import { CreateMediaValidationDto } from './dto/media.dto.js';
-import { RequestUploadUrlDto, UploadDirectMediaDto } from './dto/request-upload-url.dto.js';
+import {
+  RequestUploadUrlDto,
+  UploadDirectMediaDto,
+  DeleteDirectMediaDto,
+} from './dto/request-upload-url.dto.js';
 import { StorageService } from '../common/storage/storage.service.js';
 import type { MinimalUser } from '../permissions/permissions.service.js';
 
@@ -339,6 +343,24 @@ export class AdminMediaController {
     return {
       success: true,
       data: result,
+    };
+  }
+
+  /**
+   * POST /api/v1/admin/products/media/delete-direct
+   * Admin: Permanently delete an uploaded media file from Cloudflare R2 storage.
+   */
+  @Post('media/delete-direct')
+  @RequirePermissions(Permissions.PRODUCT_MEDIA_MANAGE)
+  @HttpCode(HttpStatus.OK)
+  async deleteDirect(
+    @Body() dto: DeleteDirectMediaDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    await this.storageService.deleteFile(dto.url, req.user);
+    return {
+      success: true,
+      message: 'Media deleted permanently from storage',
     };
   }
 

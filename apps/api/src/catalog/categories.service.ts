@@ -295,6 +295,50 @@ export class CategoriesService {
   }
 
   /**
+   * Permanently delete a category (Superadmin action).
+   * Validates: category has no products associated with it.
+   */
+  async deletePermanent(id: string, actor: MinimalUser): Promise<{ success: boolean; message: string }> {
+    const existing = await this.prisma.category.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException(`Category '${id}' not found`);
+    }
+
+    const productCount = await this.prisma.product.count({
+      where: { categoryId: id },
+    });
+    if (productCount > 0) {
+      throw new ConflictException(
+        `Cannot permanently delete category '${existing.name}': it has ${productCount} product(s) linked to it. Please reassign or delete the products first.`,
+      );
+    }
+
+    const childCount = await this.prisma.category.count({
+      where: { parentId: id },
+    });
+    if (childCount > 0) {
+      throw new ConflictException(
+        `Cannot permanently delete category '${existing.name}': it has ${childCount} sub-category(ies). Please reassign or delete sub-categories first.`,
+      );
+    }
+
+    await this.prisma.category.delete({ where: { id } });
+
+    await this.auditService.logEvent({
+      actorId: actor.id,
+      actorRole: actor.role,
+      actorEmail: actor.email,
+      action: AuditAction.CATEGORY_DELETED,
+      entityType: AuditEntityType.CATEGORY,
+      entityId: id,
+      previousValue: { name: existing.name, slug: existing.slug },
+    });
+
+    await this.invalidateCategoryCache(existing.slug);
+    return { success: true, message: `Category '${existing.name}' was permanently deleted.` };
+  }
+
+  /**
    * Returns rootCategoryId and all its descendant category IDs recursively.
    * - Includes the root category ID itself.
    * - Eliminates duplicates.

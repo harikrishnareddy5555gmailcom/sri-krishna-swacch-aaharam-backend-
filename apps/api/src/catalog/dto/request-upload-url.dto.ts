@@ -34,3 +34,10 @@ export class UploadDirectMediaDto {
   @IsNotEmpty()
   dataBase64!: string;
 }
+
+export class DeleteDirectMediaDto {
+  @IsString()
+  @IsNotEmpty()
+  url!: string;
+}
+

@@ -29,6 +29,7 @@ import {
 } from '@vishkaraa/types';
 import { CategoriesService } from './categories.service.js';
 import { InventoryService } from '../inventory/inventory.service.js';
+import { StorageService } from '../common/storage/storage.service.js';
 import type { MinimalUser } from '../permissions/permissions.service.js';
 import type { Prisma } from '@prisma/client';
 import type { PublicCatalogQuery, CatalogSortOption } from '@vishkaraa/types';
@@ -47,6 +48,8 @@ export class ProductsService {
     private readonly categoriesService?: CategoriesService,
     @Optional()
     private readonly inventoryService?: InventoryService,
+    @Optional()
+    private readonly storageService?: StorageService,
   ) {}
 
   private async executeTx<T>(
@@ -1300,6 +1303,15 @@ export class ProductsService {
     }
 
     await this.prisma.productMedia.delete({ where: { id: mediaId } });
+
+    // Permanently remove from Cloudflare R2 object storage
+    if (this.storageService && media.url) {
+      try {
+        await this.storageService.deleteFile(media.url, actor);
+      } catch (err: unknown) {
+        this.logger.warn(`Failed to delete media file from R2: ${(err as Error).message}`);
+      }
+    }
 
     await this.auditService.logEvent({
       actorId: actor.id,

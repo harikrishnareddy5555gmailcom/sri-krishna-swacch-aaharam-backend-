@@ -131,15 +131,19 @@ export class AdminCategoriesController {
 
   /**
    * DELETE /api/v1/admin/categories/:id
-   * Admin: Archive a category (soft-delete). Requires no active products.
+   * Admin: Archive (soft-delete) or permanently delete category if ?hard=true.
    */
   @Delete(':id')
   @RequirePermissions(Permissions.CATEGORIES_DELETE)
   @HttpCode(HttpStatus.OK)
-  async archive(
+  async delete(
     @Param('id', ParseUUIDPipe) id: string,
+    @Query('hard') hard: string | undefined,
     @Request() req: AuthenticatedRequest,
   ) {
+    if (hard === 'true') {
+      return this.categoriesService.deletePermanent(id, req.user);
+    }
     return this.categoriesService.archive(id, req.user);
   }
 }
