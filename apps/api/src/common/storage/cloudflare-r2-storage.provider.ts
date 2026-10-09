@@ -95,9 +95,18 @@ export class CloudflareR2StorageProvider implements StorageProvider {
       ContentLength: request.fileSizeBytes,
     });
 
-    const uploadUrl = await getSignedUrl(this.s3Client, command, {
-      expiresIn: expiresInSeconds,
-    });
+    let uploadUrl: string;
+    try {
+      uploadUrl = await getSignedUrl(this.s3Client, command, {
+        expiresIn: expiresInSeconds,
+      });
+    } catch (err: unknown) {
+      const awsErr = err as Error;
+      this.logger.error(
+        `Cloudflare R2 presigned URL generation failed [${awsErr.name}]: ${awsErr.message}. Verify R2 credentials in Railway.`,
+      );
+      throw new Error(`Cloudflare R2 URL generation failed: ${awsErr.message}`);
+    }
 
     const publicUrl = this.publicBaseUrl
       ? `${this.publicBaseUrl}/${key}`
@@ -130,7 +139,18 @@ export class CloudflareR2StorageProvider implements StorageProvider {
       ContentLength: buffer.length,
     });
 
-    await this.s3Client.send(command);
+    try {
+      await this.s3Client.send(command);
+    } catch (err: unknown) {
+      const awsErr = err as Error & { $metadata?: { httpStatusCode?: number } };
+      this.logger.error(
+        `Cloudflare R2 upload failed [${awsErr.name}]: ${awsErr.message} (HTTP ${awsErr.$metadata?.httpStatusCode || 'unknown'}). ` +
+        `Verify R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_BUCKET_NAME in Railway.`,
+      );
+      throw new Error(
+        `Cloudflare R2 upload failed (${awsErr.name}: ${awsErr.message}). Check R2 variables in Railway.`,
+      );
+    }
 
     const publicUrl = this.publicBaseUrl
       ? `${this.publicBaseUrl}/${key}`
@@ -154,6 +174,10 @@ export class CloudflareR2StorageProvider implements StorageProvider {
       Key: key,
     });
 
-    await this.s3Client.send(command);
+    try {
+      await this.s3Client.send(command);
+    } catch (err: unknown) {
+      this.logger.warn(`Failed to delete file ${key} from R2: ${(err as Error).message}`);
+    }
   }
 }
