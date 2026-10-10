@@ -975,29 +975,14 @@ export class InventoryService {
           continue; // Idempotently skipped
         }
 
-        // If already deducted at packing station, record ship departure without double-deduction
+        // If already deducted at packing station, physical departure was already accounted for.
+        // DB constraint chk_movement_delta_non_zero forbids quantityDelta == 0.
         const packMovement = await transaction.inventoryMovement.findUnique({
           where: { idempotencyKey: `ord_pack_${orderId}_${item.variantId}` },
         });
 
         if (packMovement) {
-          await transaction.inventoryMovement.create({
-            data: {
-              idempotencyKey,
-              inventoryItemId: row.id,
-              variantId: item.variantId,
-              type: InventoryMovementType.ORDER_SHIPPED,
-              quantityDelta: 0,
-              onHandAfter: row.onHand,
-              reservedAfter: row.reserved,
-              committedAfter: row.committed,
-              referenceType: 'ORDER',
-              referenceId: orderId,
-              actorId,
-              reason: `Order ${orderId} dispatched from packing station`,
-            },
-          });
-          continue;
+          continue; // Physical stock was already deducted at packing; avoid 0-delta constraint violation
         }
 
         const newCommitted = Math.max(0, row.committed - item.quantity);
