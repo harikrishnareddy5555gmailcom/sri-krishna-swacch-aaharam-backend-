@@ -118,6 +118,13 @@ async function bootstrap(): Promise<void> {
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: [
+      "Cache-Control",
+      "cache-control",
+      "Pragma",
+      "pragma",
+      "X-Requested-With",
+      "x-requested-with",
+      "Origin",
       "Content-Type",
       "Authorization",
       "X-Correlation-ID",

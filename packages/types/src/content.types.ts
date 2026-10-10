@@ -26,11 +26,26 @@ export interface HeroContent {
   imageAlt: string;
 }
 
+export interface CategoryCardContent {
+  id: string;
+  name: string;
+  teluguName?: string;
+  slug: string;
+  badge?: string;
+  description?: string;
+  imageUrl?: string;
+  iconSrc?: string;
+  themeGradient?: string;
+  accentColor?: string;
+  badgeBg?: string;
+}
+
 export interface CategorySectionContent {
   enabled: boolean;
   heading: string;
   subheading: string;
   onlyAvailableOils: boolean;
+  items?: CategoryCardContent[];
 }
 
 export interface FeaturedSectionContent {
