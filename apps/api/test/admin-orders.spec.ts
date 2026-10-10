@@ -5,8 +5,14 @@ import {
   ConflictException,
   BadRequestException,
 } from '@nestjs/common';
-import { Prisma, PaymentStatus, OrderStatus } from '@prisma/client';
-import { AuditAction, AuditEntityType, UserRole, Permissions } from '@vishkaraa/types';
+import { Prisma, PaymentStatus } from '@prisma/client';
+import {
+  AuditAction,
+  AuditEntityType,
+  UserRole,
+  Permissions,
+  OrderStatus,
+} from '@vishkaraa/types';
 import { OrderService } from '../src/orders/orders.service.js';
 import { AdminOrdersController } from '../src/orders/admin-orders.controller.js';
 import type { MinimalUser } from '../src/permissions/permissions.service.js';
@@ -166,8 +172,8 @@ describe('Admin Orders & State Machine — Phase 08B', () => {
         }),
       );
       expect(result.orders).toHaveLength(1);
-      expect(result.orders[0].orderNumber).toBe('VN-202609-A1B2C3D4');
-      expect(result.orders[0].customer?.email).toBe('shopper@vishkaraa.local');
+      expect(result.orders[0]!.orderNumber).toBe('VN-202609-A1B2C3D4');
+      expect(result.orders[0]!.customer?.email).toBe('shopper@vishkaraa.local');
       expect(result.total).toBe(1);
       expect(result.page).toBe(1);
       expect(result.limit).toBe(20);

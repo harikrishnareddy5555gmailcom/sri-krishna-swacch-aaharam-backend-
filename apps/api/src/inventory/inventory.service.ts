@@ -748,11 +748,126 @@ export class InventoryService {
           continue; // Already processed idempotently
         }
 
+        // Check if item was already packed & deducted from onHand
+        const packMovement = await transaction.inventoryMovement.findUnique({
+          where: { idempotencyKey: `ord_pack_${orderId}_${item.variantId}` },
+        });
+
+        let updatedItem;
+        if (packMovement) {
+          // It was packed, so physical onHand was decremented. Restore physical onHand!
+          const newOnHand = row.onHand + item.quantity;
+          updatedItem = await transaction.inventoryItem.update({
+            where: { id: row.id },
+            data: {
+              onHand: newOnHand,
+              version: { increment: 1 },
+            },
+          });
+        } else {
+          // Still in confirmed status (committed). Restore committed!
+          const newCommitted = Math.max(0, row.committed - item.quantity);
+          updatedItem = await transaction.inventoryItem.update({
+            where: { id: row.id },
+            data: {
+              committed: newCommitted,
+              version: { increment: 1 },
+            },
+          });
+        }
+
+        await transaction.inventoryMovement.create({
+          data: {
+            idempotencyKey,
+            inventoryItemId: row.id,
+            variantId: item.variantId,
+            type: InventoryMovementType.ORDER_CANCELLED,
+            quantityDelta: item.quantity,
+            onHandAfter: updatedItem.onHand,
+            reservedAfter: updatedItem.reserved,
+            committedAfter: updatedItem.committed,
+            referenceType: 'ORDER',
+            referenceId: orderId,
+            actorId,
+            reason: reason || `Order ${orderId} cancelled; stock restored`,
+          },
+        });
+      }
+    });
+  }
+
+  /**
+   * Decrements physical onHand stock and clears committed stock when an order is PACKING (PROCESSING).
+   * Physical goods are picked from warehouse shelves and packed into cartons: committed - qty, onHand - qty.
+   */
+  async packOrderInventory(
+    orderId: string,
+    actorId: string,
+    tx?: Prisma.TransactionClient,
+  ): Promise<void> {
+    await this.executeTx(tx, async (transaction) => {
+      const order = await transaction.order.findUnique({
+        where: { id: orderId },
+        include: { items: true },
+      });
+
+      if (!order) {
+        return;
+      }
+
+      const validItems = order.items.filter(
+        (i): i is typeof i & { variantId: string } =>
+          typeof i.variantId === 'string' && i.variantId.length > 0,
+      );
+
+      if (validItems.length === 0) {
+        return;
+      }
+
+      const sortedItems = [...validItems].sort((a, b) =>
+        a.variantId.localeCompare(b.variantId),
+      );
+      const variantIds = sortedItems.map((i) => i.variantId);
+
+      const lockedRows: Array<{
+        id: string;
+        variantId: string;
+        onHand: number;
+        reserved: number;
+        committed: number;
+        version: number;
+      }> = await transaction.$queryRaw`
+        SELECT id, "variantId", "onHand", reserved, committed, version
+        FROM inventory_items
+        WHERE "variantId" IN (${Prisma.join(variantIds)})
+        ORDER BY "variantId" ASC
+        FOR UPDATE
+      `;
+
+      const rowMap = new Map(lockedRows.map((r) => [r.variantId, r]));
+
+      for (const item of sortedItems) {
+        const row = rowMap.get(item.variantId);
+        if (!row) continue;
+
+        const idempotencyKey = `ord_pack_${orderId}_${item.variantId}`;
+        const existingMovement =
+          await transaction.inventoryMovement.findUnique({
+            where: { idempotencyKey },
+          });
+
+        if (existingMovement) {
+          continue; // Idempotently skipped
+        }
+
         const newCommitted = Math.max(0, row.committed - item.quantity);
+        const newOnHand = Math.max(0, row.onHand - item.quantity);
+
         const updatedItem = await transaction.inventoryItem.update({
           where: { id: row.id },
           data: {
             committed: newCommitted,
+            onHand: newOnHand,
             version: { increment: 1 },
           },
         });
@@ -762,7 +877,7 @@ export class InventoryService {
             idempotencyKey,
             inventoryItemId: row.id,
             variantId: item.variantId,
-            type: InventoryMovementType.ORDER_CANCELLED,
+            type: InventoryMovementType.ORDER_SHIPPED,
             quantityDelta: -item.quantity,
             onHandAfter: updatedItem.onHand,
             reservedAfter: updatedItem.reserved,
@@ -770,7 +885,7 @@ export class InventoryService {
             referenceType: 'ORDER',
             referenceId: orderId,
             actorId,
-            reason: reason || `Order ${orderId} cancelled; committed stock restored`,
+            reason: `Order ${orderId} moved to packing; physical stock deducted from warehouse`,
           },
         });
       }
@@ -839,6 +954,31 @@ export class InventoryService {
 
         if (existingMovement) {
           continue; // Idempotently skipped
+        }
+
+        // If already deducted at packing station, record ship departure without double-deduction
+        const packMovement = await transaction.inventoryMovement.findUnique({
+          where: { idempotencyKey: `ord_pack_${orderId}_${item.variantId}` },
+        });
+
+        if (packMovement) {
+          await transaction.inventoryMovement.create({
+            data: {
+              idempotencyKey,
+              inventoryItemId: row.id,
+              variantId: item.variantId,
+              type: InventoryMovementType.ORDER_SHIPPED,
+              quantityDelta: 0,
+              onHandAfter: row.onHand,
+              reservedAfter: row.reserved,
+              committedAfter: row.committed,
+              referenceType: 'ORDER',
+              referenceId: orderId,
+              actorId,
+              reason: `Order ${orderId} dispatched from packing station`,
+            },
+          });
+          continue;
         }
 
         const newCommitted = Math.max(0, row.committed - item.quantity);
@@ -1253,6 +1393,67 @@ export class InventoryService {
   }
 
   /**
+   * Directly sets the on-hand stock quantity (e.g. from quick stock manager).
+   * Can set to 0 (out of stock) or any target integer >= 0.
+   * Computes delta and executes within an atomic inventory transaction.
+   */
+  async setStock(params: {
+    variantId: string;
+    quantity: number;
+    reason?: string;
+    idempotencyKey?: string;
+    actorId: string;
+    actorRole: string;
+    actorEmail?: string;
+  }): Promise<InventoryItemDto> {
+    if (params.quantity < 0) {
+      throw new BadRequestException('Stock quantity cannot be negative.');
+    }
+
+    return this.executeTx(undefined, async (transaction) => {
+      // 1. Ensure inventory item exists
+      const item = await transaction.inventoryItem.upsert({
+        where: { variantId: params.variantId },
+        update: {},
+        create: {
+          variantId: params.variantId,
+          onHand: 0,
+          reserved: 0,
+          committed: 0,
+          lowStockThreshold: 5,
+          version: 1,
+        },
+      });
+
+      const currentOnHand = item.onHand;
+      const delta = params.quantity - currentOnHand;
+
+      if (delta === 0) {
+        return this.mapItemToDto(item);
+      }
+
+      const key = params.idempotencyKey || `set_${params.variantId}_${Date.now()}`;
+      const defaultReason =
+        params.quantity === 0
+          ? 'Admin marked item Out of Stock'
+          : `Admin updated stock level from ${currentOnHand} to ${params.quantity}`;
+
+      return this.adjustStock(
+        {
+          variantId: params.variantId,
+          delta,
+          reason: params.reason && params.reason.trim().length >= 5 ? params.reason : defaultReason,
+          idempotencyKey: key,
+          actorId: params.actorId,
+          actorRole: params.actorRole,
+          actorEmail: params.actorEmail,
+        },
+        transaction,
+      );
+    });
+  }
+
+  /**
    * Sweeper/Recovery: Expires reservations that have passed their TTL.
    * Releases stock back to unreserved pool.
    */
@@ -1513,6 +1714,54 @@ export class InventoryService {
       createdAt: item.createdAt.toISOString(),
       updatedAt: item.updatedAt.toISOString(),
     };
+  }
+
+  /**
+   * Comprehensive inventory summary:
+   * lowStockCount, totalOnHand, totalAvailable, totalCommitted
+   */
+  async getInventorySummary(): Promise<{
+    lowStockCount: number;
+    totalOnHand: number;
+    totalAvailable: number;
+    totalCommitted: number;
+  }> {
+    try {
+      const result = await this.prisma.$queryRaw<
+        Array<{
+          low_stock_count: bigint;
+          total_on_hand: bigint;
+          total_available: bigint;
+          total_committed: bigint;
+        }>
+      >`
+        SELECT 
+          COUNT(CASE WHEN ("onHand" - "reserved" - "committed") <= "lowStockThreshold" THEN 1 END)::bigint AS low_stock_count,
+          COALESCE(SUM("onHand"), 0)::bigint AS total_on_hand,
+          COALESCE(SUM(GREATEST(0, "onHand" - "reserved" - "committed")), 0)::bigint AS total_available,
+          COALESCE(SUM("committed"), 0)::bigint AS total_committed
+        FROM inventory_items
+      `;
+      const row = result[0];
+      return {
+        lowStockCount: Number(row?.low_stock_count ?? 0),
+        totalOnHand: Number(row?.total_on_hand ?? 0),
+        totalAvailable: Number(row?.total_available ?? 0),
+        totalCommitted: Number(row?.total_committed ?? 0),
+      };
+    } catch (error) {
+      this.logger.warn(`Failed to fetch inventory summary: ${(error as Error).message}`);
+      return { lowStockCount: 0, totalOnHand: 0, totalAvailable: 0, totalCommitted: 0 };
+    }
+  }
+
+  /**
+   * Count inventory items that are currently low on stock.
+   * A variant is "low stock" when available (onHand - reserved - committed) <= lowStockThreshold.
+   */
+  async getLowStockCount(): Promise<number> {
+    const summary = await this.getInventorySummary();
+    return summary.lowStockCount;
   }
 
   private mapReservationToDto(

@@ -10,6 +10,8 @@ import {
   IsObject,
   IsArray,
   ValidateNested,
+  IsInt,
+  Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ProductStatus } from '@vishkaraa/types';
@@ -118,5 +120,44 @@ export class UpdateProductValidationDto {
   @IsOptional()
   @IsObject()
   metadata?: Record<string, unknown>;
+}
+
+export class QuickVariantDto {
+  @IsString()
+  @IsNotEmpty()
+  packageSize!: string;
+
+  @IsInt()
+  @Min(1)
+  price!: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  compareAtPrice?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  stock?: number;
+}
+
+export class QuickCreateProductDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  name!: string;
+
+  @IsUUID()
+  categoryId!: string;
+
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => QuickVariantDto)
+  variants!: QuickVariantDto[];
 }
 

@@ -26,6 +26,7 @@ import {
   AdjustStockDto,
   StockIncreaseBodyDto,
   StockDecreaseBodyDto,
+  SetStockBodyDto,
 } from './dto/adjust-stock.dto.js';
 
 interface AuthenticatedRequest extends Request {
@@ -166,6 +167,29 @@ export class AdminInventoryController {
     return this.inventoryService.adjustStock({
       variantId,
       delta: dto.delta,
+      reason: dto.reason,
+      idempotencyKey: dto.idempotencyKey,
+      actorId: actor.id,
+      actorRole: actor.role,
+      actorEmail: actor.email,
+    });
+  }
+
+  @Post([':variantId/set-stock', 'variants/:variantId/set-stock'])
+  @HttpCode(HttpStatus.OK)
+  async setStock(
+    @Param('variantId', ParseUUIDPipe) variantId: string,
+    @Body() dto: SetStockBodyDto,
+    @Req() req: Request,
+  ) {
+    const actor = extractUser(req);
+    const can = await this.permissionsService.can(actor, Permissions.INVENTORY_MANAGE);
+    if (!can) {
+      throw new ForbiddenException('INVENTORY.MANAGE permission required.');
+    }
+    return this.inventoryService.setStock({
+      variantId,
+      quantity: dto.quantity,
       reason: dto.reason,
       idempotencyKey: dto.idempotencyKey,
       actorId: actor.id,

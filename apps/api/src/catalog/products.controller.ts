@@ -25,9 +25,11 @@ import { PermissionsGuard } from '../auth/guards/permissions.guard.js';
 import { RequirePermissions } from '../auth/decorators/permissions.decorator.js';
 import { Permissions, ProductStatus, type CatalogSortOption } from '@vishkaraa/types';
 import { ProductsService } from './products.service.js';
+import { InventoryService } from '../inventory/inventory.service.js';
 import {
   CreateProductValidationDto,
   UpdateProductValidationDto,
+  QuickCreateProductDto,
 } from './dto/product.dto.js';
 import { CreateVariantValidationDto, UpdateVariantValidationDto } from './dto/variant.dto.js';
 import { CreateMediaValidationDto } from './dto/media.dto.js';
@@ -145,7 +147,31 @@ export class PublicProductsController {
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @Throttle({ default: { limit: 30, ttl: 60000 } })
 export class AdminProductsController {
-  constructor(private readonly productsService: ProductsService) {}
+  constructor(
+    private readonly productsService: ProductsService,
+    private readonly inventoryService: InventoryService,
+  ) {}
+
+  /**
+   * GET /api/v1/admin/products/low-stock-count
+   * Admin: Count products/variants with inventory at or below low stock threshold.
+   * Used by the Dashboard Low Stock Alert card.
+   */
+  @Get('low-stock-count')
+  @RequirePermissions(Permissions.PRODUCTS_VIEW)
+  async getLowStockCount(): Promise<{
+    count: number;
+    lowStockCount: number;
+    totalOnHand: number;
+    totalAvailable: number;
+    totalCommitted: number;
+  }> {
+    const summary = await this.inventoryService.getInventorySummary();
+    return {
+      count: summary.lowStockCount,
+      ...summary,
+    };
+  }
 
   /**
    * GET /api/v1/admin/products
@@ -185,6 +211,20 @@ export class AdminProductsController {
     @Request() req: AuthenticatedRequest,
   ) {
     return this.productsService.create(dto, req.user);
+  }
+
+  /**
+   * POST /api/v1/admin/products/quick-create
+   * Admin: Quick create product with variants in one step (Phase 5).
+   */
+  @Post('quick-create')
+  @RequirePermissions(Permissions.PRODUCTS_CREATE)
+  @HttpCode(HttpStatus.CREATED)
+  async quickCreate(
+    @Body() dto: QuickCreateProductDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.productsService.quickCreate(dto, req.user);
   }
 
   /**

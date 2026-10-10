@@ -895,6 +895,13 @@ export class OrderService {
             input.reason?.trim() || 'Operational cancellation',
             tx,
           );
+        } else if (targetStatus === OrderStatus.PROCESSING) {
+          // Auto deduct physical stock when moved to Packing (PROCESSING)
+          await this.inventoryService.packOrderInventory(
+            orderId,
+            actor.id,
+            tx,
+          );
         } else if (targetStatus === OrderStatus.SHIPPED) {
           await this.inventoryService.shipOrderInventory(
             orderId,

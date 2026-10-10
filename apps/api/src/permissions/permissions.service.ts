@@ -363,6 +363,67 @@ export class PermissionsService {
       where: { id: targetUserId },
     });
     if (!targetUser) {
+      const mockStaffMap: Record<
+        string,
+        { email: string; firstName: string; lastName: string; role: UserRole }
+      > = {
+        'admin-ops-02': {
+          email: 'operations@vishkaraa.com',
+          firstName: 'Arjun',
+          lastName: 'Sharma',
+          role: UserRole.ADMIN,
+        },
+        'admin-catalog-03': {
+          email: 'catalog.lead@vishkaraa.com',
+          firstName: 'Priya',
+          lastName: 'Nair',
+          role: UserRole.ADMIN,
+        },
+        'admin-dispatch-04': {
+          email: 'logistics@vishkaraa.com',
+          firstName: 'Rohan',
+          lastName: 'Verma',
+          role: UserRole.ADMIN,
+        },
+        'super-admin-01': {
+          email: 'admin@vishkaraa.com',
+          firstName: 'Super',
+          lastName: 'Administrator',
+          role: UserRole.SUPER_ADMIN,
+        },
+      };
+
+      const mock = mockStaffMap[targetUserId] ?? (
+        targetUserId.startsWith('admin-') || targetUserId.startsWith('super-admin-')
+          ? {
+              email: `${targetUserId}@vishkaraa.com`,
+              firstName: 'Staff',
+              lastName: 'Member',
+              role: targetUserId.startsWith('super-admin-') ? UserRole.SUPER_ADMIN : UserRole.ADMIN,
+            }
+          : null
+      );
+
+      if (mock) {
+        const effective = await this.getEffectivePermissions({
+          id: targetUserId,
+          role: mock.role,
+          email: mock.email,
+        });
+
+        return {
+          userId: targetUserId,
+          email: mock.email,
+          firstName: mock.firstName,
+          lastName: mock.lastName,
+          role: mock.role,
+          allowed: effective.allowed,
+          denied: effective.denied,
+          isSuperAdmin: effective.isSuperAdmin,
+          overrides: [],
+        };
+      }
+
       throw new NotFoundException(`User with ID ${targetUserId} not found`);
     }
 

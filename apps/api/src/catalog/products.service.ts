@@ -740,6 +740,154 @@ export class ProductsService {
   }
 
   /**
+   * Admin: Quick create product with variants and optional hero image (Phase 5).
+   * Auto-generates slug and SKUs, activates product, and returns full product with variants & media.
+   */
+  async quickCreate(
+    dto: {
+      name: string;
+      categoryId: string;
+      imageUrl?: string;
+      variants: Array<{
+        packageSize: string;
+        price: number;
+        compareAtPrice?: number;
+        stock?: number;
+      }>;
+    },
+    actor: MinimalUser,
+  ): Promise<any> {
+    return this.executeTx(async (tx) => {
+      // 1. Generate unique slug
+      const rawSlug = this.slugify(dto.name);
+      let finalSlug = rawSlug;
+      let counter = 2;
+      while (await tx.product.findUnique({ where: { slug: finalSlug } })) {
+        finalSlug = `${rawSlug}-${counter}`;
+        counter++;
+      }
+
+      // 2. Validate category exists
+      const category = await tx.category.findUnique({
+        where: { id: dto.categoryId },
+      });
+      if (!category) {
+        throw new NotFoundException(`Category '${dto.categoryId}' not found`);
+      }
+      if (category.status === 'ARCHIVED') {
+        throw new BadRequestException('Cannot create product in an archived category');
+      }
+
+      // 3. Create product (status: ACTIVE)
+      const product = await tx.product.create({
+        data: {
+          name: dto.name,
+          slug: finalSlug,
+          categoryId: dto.categoryId,
+          status: 'ACTIVE',
+          images: dto.imageUrl ? [dto.imageUrl] : [],
+        },
+      });
+
+      // 4. Attach image if provided
+      if (dto.imageUrl && !dto.imageUrl.startsWith('blob:')) {
+        await tx.productMedia.create({
+          data: {
+            productId: product.id,
+            url: dto.imageUrl,
+            altText: dto.name,
+            isPrimary: true,
+            sortOrder: 0,
+          },
+        });
+      }
+
+      // 5. Create variants
+      if (dto.variants && dto.variants.length > 0) {
+        for (let idx = 0; idx < dto.variants.length; idx++) {
+          const v = dto.variants[idx];
+          const packageSize = v.packageSize.trim() || 'Standard';
+          const variantName = packageSize;
+          const rawSku = `VN-${finalSlug.slice(0, 8).toUpperCase()}-${this.slugify(packageSize).toUpperCase()}`;
+          const uniqueSku = await this.generateUniqueSku(rawSku, undefined, tx);
+
+          const variant = await tx.productVariant.create({
+            data: {
+              productId: product.id,
+              name: variantName,
+              packageSize,
+              sku: uniqueSku,
+              price: v.price,
+              compareAtPrice: v.compareAtPrice ?? null,
+              currency: 'INR',
+              status: 'ACTIVE',
+              sortOrder: idx,
+              isDefault: idx === 0,
+              imageUrl: dto.imageUrl ?? null,
+            },
+          });
+
+          // Stock & inventory tracking
+          const stock = typeof v.stock === 'number' ? Math.max(0, v.stock) : 0;
+          if (stock > 0) {
+            const invItem = await tx.inventoryItem.create({
+              data: {
+                variantId: variant.id,
+                onHand: stock,
+                reserved: 0,
+                committed: 0,
+                lowStockThreshold: 5,
+                version: 1,
+              },
+            });
+            await tx.inventoryMovement.create({
+              data: {
+                idempotencyKey: `init_${variant.id}_${Date.now()}_${idx}`,
+                inventoryItemId: invItem.id,
+                variantId: variant.id,
+                type: 'INITIAL_STOCK',
+                quantityDelta: stock,
+                onHandAfter: stock,
+                reservedAfter: 0,
+                committedAfter: 0,
+                referenceType: 'ADMIN',
+                referenceId: product.id,
+                actorId: actor.id,
+                reason: 'Initial stock on quick-create',
+              },
+            });
+          }
+        }
+      }
+
+      await this.auditService.logEvent({
+        actorId: actor.id,
+        actorRole: actor.role,
+        actorEmail: actor.email,
+        action: AuditAction.PRODUCT_CREATED,
+        entityType: AuditEntityType.PRODUCT,
+        entityId: product.id,
+        newValue: { name: product.name, slug: product.slug, status: product.status, quickCreated: true },
+      });
+
+      await this.invalidateProductCache(product.slug);
+
+      // Return product with populated variants and media
+      return tx.product.findUnique({
+        where: { id: product.id },
+        include: {
+          variants: {
+            orderBy: [{ sortOrder: 'asc' }],
+            include: { inventoryItem: true },
+          },
+          media: { orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }] },
+          category: true,
+        },
+      });
+    });
+  }
+
+  /**
    * Admin: Update a product with atomic variant & media synchronization.
    */
   async update(id: string, dto: UpdateProductDto, actor: MinimalUser): Promise<Product> {

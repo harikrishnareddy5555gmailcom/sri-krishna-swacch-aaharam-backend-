@@ -57,3 +57,20 @@ export class StockDecreaseBodyDto {
   @MinLength(3)
   idempotencyKey?: string;
 }
+
+export class SetStockBodyDto {
+  @IsInt()
+  @Min(0)
+  @IsNotEmpty()
+  quantity!: number;
+
+  @IsOptional()
+  @IsString()
+  reason?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(3)
+  idempotencyKey?: string;
+}
+
