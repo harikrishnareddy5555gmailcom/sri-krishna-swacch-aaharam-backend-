@@ -175,6 +175,16 @@ export interface AdminOrderListItemDto {
   itemCount: number;
   shippingCity?: string | null | undefined;
   shippingState?: string | null | undefined;
+  items?: Array<{
+    id: string;
+    productName: string;
+    variantName?: string | null | undefined;
+    quantity: number;
+    unitPrice: number;
+    lineTotal: number;
+    productSku?: string | null | undefined;
+    primaryImageUrl?: string | null | undefined;
+  }> | undefined;
   createdAt: string;
   confirmedAt?: string | null | undefined;
   cancelledAt?: string | null | undefined;

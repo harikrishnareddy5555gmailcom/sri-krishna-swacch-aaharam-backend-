@@ -68,7 +68,7 @@ export class PublicProductsController {
     @Query('search') search?: string,
     @Query('sortBy') sortBy?: string,
   ) {
-    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=30');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
 
     if (page < 1) {
       throw new BadRequestException('page must be an integer greater than or equal to 1');
@@ -136,7 +136,7 @@ export class PublicProductsController {
     @Res({ passthrough: true }) res: Response,
     @Param('slug') slug: string,
   ) {
-    res.setHeader('Cache-Control', 'public, max-age=120, stale-while-revalidate=60');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     return this.productsService.findPublicBySlug(slug);
   }
 }

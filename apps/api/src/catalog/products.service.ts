@@ -347,11 +347,18 @@ export class ProductsService {
 
       const data: PublicProductListItem[] = products.map((p) => {
         const lowestVariant = p.variants[0];
-        const inv = lowestVariant?.inventoryItem;
-        const availableStock = inv ? Math.max(0, inv.onHand - inv.reserved - inv.committed) : undefined;
-        const threshold = inv?.lowStockThreshold ?? (p.metadata as Record<string, unknown> | null)?.['lowStockThreshold'] ?? 10;
-        const isOutOfStock = availableStock !== undefined ? availableStock <= 0 : false;
-        const isLowStock = availableStock !== undefined && !isOutOfStock ? availableStock <= Number(threshold) : false;
+        const totalAvailableStock = p.variants.reduce((sum, v) => {
+          const inv = v.inventoryItem;
+          const avail = inv ? Math.max(0, inv.onHand - inv.reserved - inv.committed) : 0;
+          return sum + avail;
+        }, 0);
+        const hasVariants = p.variants.length > 0;
+        const isOutOfStock = hasVariants ? totalAvailableStock <= 0 : false;
+        const threshold =
+          (p.metadata as Record<string, unknown> | null)?.['lowStockThreshold'] ??
+          lowestVariant?.inventoryItem?.lowStockThreshold ??
+          10;
+        const isLowStock = hasVariants && !isOutOfStock && totalAvailableStock <= Number(threshold);
 
         return {
           id: p.id,
@@ -427,11 +434,18 @@ export class ProductsService {
 
       const primaryImage = product.media.find((m) => m.isPrimary);
       const lowestVariant = product.variants[0];
-      const inv = lowestVariant?.inventoryItem;
-      const availableStock = inv ? Math.max(0, inv.onHand - inv.reserved - inv.committed) : undefined;
-      const threshold = inv?.lowStockThreshold ?? (product.metadata as Record<string, unknown> | null)?.['lowStockThreshold'] ?? 10;
-      const isOutOfStock = availableStock !== undefined ? availableStock <= 0 : false;
-      const isLowStock = availableStock !== undefined && !isOutOfStock ? availableStock <= Number(threshold) : false;
+      const totalAvailable = product.variants.reduce((sum, v) => {
+        const vInv = v.inventoryItem;
+        const vAvail = vInv ? Math.max(0, vInv.onHand - vInv.reserved - vInv.committed) : 0;
+        return sum + vAvail;
+      }, 0);
+      const hasVariants = product.variants.length > 0;
+      const isOutOfStock = hasVariants ? totalAvailable <= 0 : false;
+      const threshold =
+        (product.metadata as Record<string, unknown> | null)?.['lowStockThreshold'] ??
+        lowestVariant?.inventoryItem?.lowStockThreshold ??
+        10;
+      const isLowStock = hasVariants && !isOutOfStock && totalAvailable <= Number(threshold);
 
       return {
         id: product.id,

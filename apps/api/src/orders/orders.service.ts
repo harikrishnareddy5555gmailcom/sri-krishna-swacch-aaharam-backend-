@@ -701,6 +701,18 @@ export class OrderService {
           user: {
             select: { id: true, email: true, firstName: true, lastName: true },
           },
+          items: {
+            select: {
+              id: true,
+              productName: true,
+              variantName: true,
+              quantity: true,
+              unitPrice: true,
+              lineTotal: true,
+              productSku: true,
+              primaryImageUrl: true,
+            },
+          },
           _count: {
             select: { items: true },
           },
@@ -729,6 +741,25 @@ export class OrderService {
         itemCount: r._count?.items ?? 0,
         shippingCity: r.shippingCity,
         shippingState: r.shippingState,
+        items: (r as unknown as { items?: Array<{
+          id: string;
+          productName: string;
+          variantName: string | null;
+          quantity: number;
+          unitPrice: number;
+          lineTotal: number;
+          productSku: string | null;
+          primaryImageUrl: string | null;
+        }> }).items?.map((it) => ({
+          id: it.id,
+          productName: it.productName,
+          variantName: it.variantName,
+          quantity: it.quantity,
+          unitPrice: it.unitPrice,
+          lineTotal: it.lineTotal,
+          productSku: it.productSku,
+          primaryImageUrl: it.primaryImageUrl,
+        })) ?? [],
         createdAt: r.createdAt.toISOString(),
         confirmedAt: r.confirmedAt ? r.confirmedAt.toISOString() : null,
         cancelledAt: r.cancelledAt ? r.cancelledAt.toISOString() : null,

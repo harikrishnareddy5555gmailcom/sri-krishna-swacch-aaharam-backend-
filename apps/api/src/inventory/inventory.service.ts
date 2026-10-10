@@ -4,7 +4,10 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  Inject,
+  Optional,
 } from '@nestjs/common';
+import { CACHE_PROVIDER, type ICacheProvider } from '../common/cache/cache-provider.interface.js';
 import { PrismaService } from '../database/prisma.service.js';
 import {
   ReservationStatus,
@@ -83,7 +86,23 @@ export class InventoryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    @Optional()
+    @Inject(CACHE_PROVIDER)
+    private readonly cache?: ICacheProvider,
   ) {}
+
+  /**
+   * Clears public catalog cache across both product lists and product detail pages
+   * so that storefront displays live stock immediately.
+   */
+  public async invalidateCatalogCache(): Promise<void> {
+    if (!this.cache) return;
+    try {
+      await this.cache.deleteByPrefix('catalog:products:');
+    } catch {
+      // non-blocking
+    }
+  }
 
   /**
    * Helper to execute a callback within an existing transaction or create a new one.
@@ -1343,7 +1362,9 @@ export class InventoryService {
         reason: params.reason,
       });
 
-      return this.mapItemToDto(updatedItem);
+      const resDto = this.mapItemToDto(updatedItem);
+      void this.invalidateCatalogCache();
+      return resDto;
     });
   }
 

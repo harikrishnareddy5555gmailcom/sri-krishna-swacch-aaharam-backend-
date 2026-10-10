@@ -64,12 +64,13 @@ function syncDirectory(src, dest, excludes = []) {
   const xdArg = excludeDirs.length > 0 ? `/XD ${excludeDirs.join(' ')}` : '';
   const xfArg = `/XF *.log *.tsbuildinfo .env*`;
 
-  // Robocopy returns exit codes 0-7 for success (1 means files copied)
-  const robocopyCmd = `robocopy "${src}" "${dest}" /E ${xdArg} ${xfArg} /NP /NFL /NDL /NJH /NJS`;
+  // Robocopy returns exit codes 0-7 for success (1 means files copied).
+  // /IS /IT ensures files are always overwritten from the canonical monorepo even if timestamps match.
+  const robocopyCmd = `robocopy "${src}" "${dest}" /E /IS /IT ${xdArg} ${xfArg} /NP /NFL /NDL /NJH /NJS`;
   try {
     execSync(robocopyCmd, { stdio: 'pipe' });
   } catch (e) {
-    // Robocopy returns non-zero when files are copied, which is normal
+    // Robocopy returns non-zero (1-7) when files are copied, which is normal
     if (e.status > 7) {
       console.error(`Robocopy failed between ${src} and ${dest}:`, e.message);
     }
