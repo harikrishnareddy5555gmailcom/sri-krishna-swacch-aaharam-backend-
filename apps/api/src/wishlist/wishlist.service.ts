@@ -10,34 +10,39 @@ export class WishlistService {
    * Retrieves all items in the user's wishlist with full product and variant information.
    */
   async getUserWishlist(userId: string): Promise<WishlistItemDto[]> {
-    const items = await this.prisma.wishlistItem.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        product: {
-          include: {
-            media: {
-              where: { isPrimary: true },
-              take: 1,
-            },
-            variants: {
-              where: { status: 'ACTIVE' },
-              orderBy: [{ sortOrder: 'asc' }, { price: 'asc' }],
-              include: {
-                inventoryItem: {
-                  select: {
-                    onHand: true,
-                    reserved: true,
-                    committed: true,
+    let items: Array<any> = [];
+    try {
+      items = await this.prisma.wishlistItem.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          product: {
+            include: {
+              media: {
+                where: { isPrimary: true },
+                take: 1,
+              },
+              variants: {
+                where: { status: 'ACTIVE' },
+                orderBy: [{ sortOrder: 'asc' }, { price: 'asc' }],
+                include: {
+                  inventoryItem: {
+                    select: {
+                      onHand: true,
+                      reserved: true,
+                      committed: true,
+                    },
                   },
                 },
               },
             },
           },
+          variant: true,
         },
-        variant: true,
-      },
-    });
+      });
+    } catch (err) {
+      return [];
+    }
 
     return items.map((item) => {
       const p = item.product;
@@ -61,11 +66,11 @@ export class WishlistService {
           fromPrice: lowestVariant?.price,
           fromCompareAtPrice: lowestVariant?.compareAtPrice ?? undefined,
           currency: lowestVariant?.currency ?? 'INR',
-          isOutOfStock: p.variants.every((v) => {
+          isOutOfStock: p.variants.every((v: any) => {
             const inv = v.inventoryItem;
             return inv ? inv.onHand - inv.reserved - inv.committed <= 0 : false;
           }),
-          variants: p.variants.map((v) => {
+          variants: p.variants.map((v: any) => {
             const inv = v.inventoryItem;
             const avail = inv ? Math.max(0, inv.onHand - inv.reserved - inv.committed) : undefined;
             return {

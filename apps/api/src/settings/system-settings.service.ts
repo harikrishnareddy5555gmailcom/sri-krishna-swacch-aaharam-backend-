@@ -82,7 +82,12 @@ export class SystemSettingsService {
   }
 
   async getAllSettings(): Promise<SettingItem[]> {
-    const dbSettings = await this.prisma.systemSetting.findMany();
+    let dbSettings: Array<{ key: string; value: unknown; description: string | null; updatedBy: string | null; updatedAt: Date }> = [];
+    try {
+      dbSettings = await this.prisma.systemSetting.findMany();
+    } catch (err) {
+      this.logger.warn(`Could not fetch system settings from database: ${(err as Error).message}. Using default settings.`);
+    }
     const dbMap = new Map(dbSettings.map((s) => [s.key, s]));
 
     const result: SettingItem[] = [];
@@ -125,11 +130,15 @@ export class SystemSettingsService {
   }
 
   async getSetting<T>(key: string, fallback?: T): Promise<T> {
-    const setting = await this.prisma.systemSetting.findUnique({
-      where: { key },
-    });
-    if (setting) {
-      return setting.value as T;
+    try {
+      const setting = await this.prisma.systemSetting.findUnique({
+        where: { key },
+      });
+      if (setting) {
+        return setting.value as T;
+      }
+    } catch (err) {
+      this.logger.warn(`Failed reading system setting '${key}' from DB: ${(err as Error).message}. Falling back to default.`);
     }
     const def = DEFAULT_SETTINGS[key];
     if (def) {
