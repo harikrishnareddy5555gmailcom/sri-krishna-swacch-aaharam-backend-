@@ -61,7 +61,10 @@ import { SystemSettingsModule } from './settings/system-settings.module.js';
     ThrottlerModule.forRoot([
       {
         ttl: parseInt(process.env['RATE_LIMIT_TTL_MS'] ?? '60000', 10),
-        limit: parseInt(process.env['RATE_LIMIT_MAX_REQUESTS'] ?? '100', 10),
+        limit:
+          process.env['NODE_ENV'] === 'production'
+            ? parseInt(process.env['RATE_LIMIT_MAX_REQUESTS'] ?? '100', 10)
+            : 100000,
       },
     ]),
 
